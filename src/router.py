@@ -1,0 +1,286 @@
+"""
+智能路由核心模块
+根据任务复杂度和硬件状态自动选择最佳推理路径
+"""
+
+import os
+import time
+from typing import Optional, Dict, List, Callable
+from dataclasses import dataclass
+from enum import Enum
+
+import ollama
+
+from .gpu_monitor import GPUMonitor, CPUMonitor
+from .complexity_analyzer import ComplexityAnalyzer, TaskComplexity
+
+
+class RoutingStrategy(Enum):
+    """路由策略"""
+    AUTO = "auto"           # 自动选择
+    LOCAL_GPU = "gpu"       # 强制本地GPU
+    LOCAL_CPU = "cpu"       # 强制本地CPU
+    CLOUD = "cloud"         # 强制云端
+
+
+@dataclass
+class RouterConfig:
+    """路由器配置"""
+    # GPU阈值 (GB)
+    gpu_vram_threshold: float = 4.0  # 低于此值转CPU
+    
+    # 模型配置
+    small_model: str = "gemma3:4b"      # 小模型 4B
+    medium_model: str = "qwen2.5:7b"    # 中模型 7B CPU
+    large_model: str = "llama3.2:8b"    # 大模型 8B CPU (fallback)
+    
+    # 模型预估显存占用 (GB)
+    small_model_vram: float = 3.0
+    medium_model_vram: float = 6.0
+    large_model_vram: float = 7.0
+    
+    # 云端配置
+    cloud_api_key: Optional[str] = None
+    cloud_base_url: str = "https://api.deepseek.com"
+    cloud_model: str = "deepseek-chat"
+    
+    # 超时设置
+    local_timeout: int = 120
+    cloud_timeout: int = 60
+    
+    # 性能优化
+    use_gpu_offload: bool = True  # 是否使用GPU卸载
+    num_ctx: int = 4096           # 上下文长度
+
+
+class InferenceResult:
+    """推理结果"""
+    def __init__(self, content: str, source: str, latency: float, tokens: int = 0):
+        self.content = content
+        self.source = source  # "local_gpu", "local_cpu", "cloud"
+        self.latency = latency
+        self.tokens = tokens
+        self.timestamp = time.time()
+        
+    def __str__(self):
+        return f"[{self.source}] {self.content[:100]}..."
+
+
+class SmartRouter:
+    """
+    智能模型路由器
+    
+    适配硬件: U9 275HX (24核) + RTX 5060 8GB + 32GB RAM
+    """
+    
+    def __init__(self, config: Optional[RouterConfig] = None):
+        self.config = config or RouterConfig()
+        self.gpu_monitor = GPUMonitor()
+        self.cpu_monitor = CPUMonitor()
+        self.analyzer = ComplexityAnalyzer()
+        
+        # 统计信息
+        self.stats = {
+            "gpu_calls": 0,
+            "cpu_calls": 0,
+            "cloud_calls": 0,
+            "total_latency": 0
+        }
+        
+        # 云端客户端延迟初始化
+        self._cloud_client = None
+        
+    def _get_cloud_client(self):
+        """延迟初始化云端客户端"""
+        if self._cloud_client is None and self.config.cloud_api_key:
+            try:
+                import openai
+                self._cloud_client = openai.OpenAI(
+                    api_key=self.config.cloud_api_key,
+                    base_url=self.config.cloud_base_url
+                )
+            except ImportError:
+                print("⚠️ 未安装openai包，云端功能不可用。运行: pip install openai")
+        return self._cloud_client
+    
+    def route(self, prompt: str, 
+              complexity: Optional[str] = None,
+              strategy: RoutingStrategy = RoutingStrategy.AUTO) -> InferenceResult:
+        """
+        智能路由主入口
+        
+        Args:
+            prompt: 用户输入
+            complexity: 手动指定复杂度 ("simple", "medium", "complex")
+            strategy: 路由策略
+        """
+        start_time = time.time()
+        
+        # 1. 分析任务复杂度
+        if complexity is None:
+            analysis = self.analyzer.analyze(prompt)
+            complexity = analysis.complexity.value
+            print(f"📊 任务分析: {complexity} (置信度: {analysis.confidence:.0%}, "
+                  f"预估tokens: {analysis.estimated_tokens})")
+        
+        # 2. 根据策略和复杂度选择执行路径
+        if strategy == RoutingStrategy.LOCAL_GPU:
+            result = self._run_local_gpu(prompt)
+        elif strategy == RoutingStrategy.LOCAL_CPU:
+            result = self._run_local_cpu(prompt)
+        elif strategy == RoutingStrategy.CLOUD:
+            result = self._run_cloud(prompt)
+        else:  # AUTO
+            result = self._auto_route(prompt, complexity)
+        
+        latency = time.time() - start_time
+        result.latency = latency
+        self.stats["total_latency"] += latency
+        
+        print(f"⏱️ 总耗时: {latency:.2f}s")
+        return result
+    
+    def _auto_route(self, prompt: str, complexity: str) -> InferenceResult:
+        """自动路由决策"""
+        gpu_mem = self.gpu_monitor.get_free_vram_gb()
+        print(f"🎮 当前GPU空闲显存: {gpu_mem:.1f}GB")
+        
+        # 获取CPU状态
+        cpu_mem = self.cpu_monitor.get_memory_info()
+        print(f"💻 系统内存: {cpu_mem['available_gb']:.1f}GB 可用")
+        
+        # 路由决策逻辑
+        if complexity == "simple":
+            # 简单任务：优先GPU小模型
+            if gpu_mem >= self.config.small_model_vram + 1:
+                return self._run_local_gpu(prompt, self.config.small_model)
+            else:
+                return self._run_local_cpu(prompt, self.config.small_model)
+                
+        elif complexity == "medium":
+            # 中等任务：GPU显存够就用GPU，否则CPU跑7B
+            if gpu_mem >= self.config.medium_model_vram + 1:
+                return self._run_local_gpu(prompt, self.config.medium_model)
+            elif cpu_mem['available_gb'] >= 4:  # CPU需要至少4GB内存
+                return self._run_local_cpu(prompt, self.config.medium_model)
+            else:
+                return self._run_cloud(prompt)
+                
+        else:  # complex
+            # 复杂任务：优先云端API
+            if self.config.cloud_api_key:
+                return self._run_cloud(prompt)
+            elif cpu_mem['available_gb'] >= 6:
+                #  fallback到CPU大模型
+                return self._run_local_cpu(prompt, self.config.large_model)
+            else:
+                return self._run_local_gpu(prompt, self.config.small_model)
+    
+    def _run_local_gpu(self, prompt: str, model: Optional[str] = None) -> InferenceResult:
+        """本地GPU推理"""
+        model = model or self.config.small_model
+        print(f"🚀 [本地GPU] 使用模型: {model}")
+        
+        start = time.time()
+        try:
+            response = ollama.chat(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                options={
+                    "num_ctx": self.config.num_ctx,
+                    "num_gpu": 99,  # 使用最大GPU层数
+                }
+            )
+            latency = time.time() - start
+            self.stats["gpu_calls"] += 1
+            
+            return InferenceResult(
+                content=response['message']['content'],
+                source="local_gpu",
+                latency=latency
+            )
+        except Exception as e:
+            print(f"❌ GPU推理失败: {e}，尝试CPU...")
+            return self._run_local_cpu(prompt, model)
+    
+    def _run_local_cpu(self, prompt: str, model: Optional[str] = None) -> InferenceResult:
+        """本地CPU推理"""
+        model = model or self.config.medium_model
+        print(f"💻 [本地CPU] 使用模型: {model} (24核并行)")
+        
+        start = time.time()
+        try:
+            # CPU推理：num_gpu=0 表示不卸载到GPU
+            response = ollama.chat(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                options={
+                    "num_ctx": self.config.num_ctx,
+                    "num_gpu": 0,  # 纯CPU推理
+                    "num_thread": 0,  # 使用所有线程
+                }
+            )
+            latency = time.time() - start
+            self.stats["cpu_calls"] += 1
+            
+            return InferenceResult(
+                content=response['message']['content'],
+                source="local_cpu",
+                latency=latency
+            )
+        except Exception as e:
+            print(f"❌ CPU推理失败: {e}")
+            if self.config.cloud_api_key:
+                return self._run_cloud(prompt)
+            raise
+    
+    def _run_cloud(self, prompt: str) -> InferenceResult:
+        """云端API推理"""
+        print(f"☁️ [云端API] 使用: {self.config.cloud_model}")
+        
+        client = self._get_cloud_client()
+        if not client:
+            raise RuntimeError("云端客户端未初始化，请配置API密钥")
+        
+        start = time.time()
+        try:
+            response = client.chat.completions.create(
+                model=self.config.cloud_model,
+                messages=[{"role": "user", "content": prompt}],
+                timeout=self.config.cloud_timeout
+            )
+            latency = time.time() - start
+            self.stats["cloud_calls"] += 1
+            
+            return InferenceResult(
+                content=response.choices[0].message.content,
+                source="cloud",
+                latency=latency
+            )
+        except Exception as e:
+            print(f"❌ 云端API失败: {e}")
+            # Fallback到本地
+            return self._run_local_cpu(prompt)
+    
+    def print_stats(self):
+        """打印统计信息"""
+        total = sum(self.stats.values()) - self.stats["total_latency"]
+        if total == 0:
+            print("暂无统计信息")
+            return
+            
+        print("\n📈 使用统计:")
+        print(f"   GPU调用: {self.stats['gpu_calls']} ({self.stats['gpu_calls']/total:.0%})")
+        print(f"   CPU调用: {self.stats['cpu_calls']} ({self.stats['cpu_calls']/total:.0%})")
+        print(f"   云端调用: {self.stats['cloud_calls']} ({self.stats['cloud_calls']/total:.0%})")
+        avg_latency = self.stats['total_latency'] / max(1, total)
+        print(f"   平均延迟: {avg_latency:.2f}s")
+    
+    def list_available_models(self) -> List[str]:
+        """列出Ollama中可用的模型"""
+        try:
+            models = ollama.list()
+            return [m['model'] for m in models.get('models', [])]
+        except Exception as e:
+            print(f"获取模型列表失败: {e}")
+            return []
