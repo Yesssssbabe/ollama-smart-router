@@ -4,175 +4,245 @@
 
 讓本地小模型處理簡單任務，複雜任務自動切換大模型或雲端API，節省時間和成本。
 
-[简体中文](README.md) | [English](README_EN.md)
+**[简体中文](README.md) | [English](README_EN.md)**
 
 ---
 
-## ✨ 核心特性
+## 📋 目錄
 
-| 特性 | 描述 |
+- [配置要求](#配置要求)
+- [快速開始（5分鐘上手）](#快速開始5分鐘上手)
+- [安裝步驟](#安裝步驟)
+- [使用方法](#使用方法)
+- [常見問題](#常見問題)
+- [聯絡方式](#聯絡方式)
+
+---
+
+## 配置要求
+
+### ✅ 必要條件
+
+| 項目 | 要求 | 檢查方法 |
+|------|------|----------|
+| **作業系統** | Windows 10+/macOS/Linux | - |
+| **Python** | 3.9 或更高版本 | `python --version` |
+| **Ollama** | 已安裝並運行 | 任務欄有羊駝圖標 |
+| **記憶體** | 至少 8GB（推薦 16GB） | - |
+| **網路** | 能訪問 GitHub 和 PyPI | 瀏覽器能打開 github.com |
+
+### ⚠️ 可選條件（功能更強）
+
+| 項目 | 說明 |
 |------|------|
-| 🎯 **智慧路由** | 自動分析任務複雜度，智慧選擇本地GPU/CPU/雲端 |
-| 🎮 **顯存保護** | 即時監控GPU顯存，避免OOM崩潰 |
-| 💻 **靈活降級** | GPU不足時自動切換CPU推理 |
-| ☁️ **雲端兜底** | 複雜任務無縫切換DeepSeek等API |
-| 📊 **複雜度分析** | 啟發式演算法自動評估任務難度 |
-| ⚡ **流式輸出** | 支援流式回應，體驗更流暢 |
+| **NVIDIA 顯卡** | 有 GPU 可以加速小模型推理 |
+| **雲端 API 金鑰** | DeepSeek/OpenAI 等，用於複雜任務 |
 
 ---
 
-## 🚀 快速開始
+## 快速開始（5分鐘上手）
 
-### 安裝
+### 第 1 步：檢查環境（30秒）
+
+打開終端/PowerShell，運行：
 
 ```bash
-# 克隆倉庫
-git clone https://github.com/yourusername/ollama-smart-router.git
+# Windows
+python --version
+# 應該顯示 Python 3.9.x 或更高
+
+# macOS/Linux
+python3 --version
+```
+
+### 第 2 步：下載專案（1分鐘）
+
+**方式 A：有 git**
+```bash
+git clone https://github.com/你的使用者名稱/ollama-smart-router.git
+cd ollama-smart-router
+```
+
+**方式 B：沒有 git**
+1. 點擊頁面綠色按鈕 `<> Code` → `Download ZIP`
+2. 解壓到任意資料夾
+3. 進入解壓後的資料夾
+
+### 第 3 步：一鍵安裝（2分鐘）
+
+**Windows：**
+```powershell
+# 在 PowerShell 中
+python check_env.py      # 檢查環境
+python install.py        # 自動安裝
+```
+
+**Mac/Linux：**
+```bash
+python3 check_env.py     # 檢查環境
+python3 install.py       # 自動安裝
+```
+
+### 第 4 步：運行測試（1分鐘）
+
+```bash
+# 檢查硬體狀態
+python -m src --status
+
+# 簡單測試
+python -m src "你好，請自我介紹"
+```
+
+🎉 **恭喜！** 如果看到回覆，說明安裝成功！
+
+---
+
+## 安裝步驟（詳細版）
+
+### 1. 安裝 Python
+
+**檢查是否已安裝：**
+```bash
+python --version      # Windows
+python3 --version     # Mac/Linux
+```
+
+**如果沒有安裝：**
+- Windows/Mac: [python.org/downloads](https://python.org/downloads) 下載安裝
+- **重要**：安裝時勾選 `Add Python to PATH`
+
+### 2. 安裝 Ollama
+
+1. 訪問 [ollama.com](https://ollama.com)
+2. 下載對應系統的安裝包
+3. 安裝後運行 Ollama（任務欄出現羊駝圖標）
+4. 下載至少一個模型：
+   ```bash
+   ollama pull gemma3:4b    # 小模型，必須
+   ollama pull qwen2.5:7b   # 中模型，推薦
+   ```
+
+### 3. 安裝本專案
+
+```bash
+# 下載專案
+git clone https://github.com/你的使用者名稱/ollama-smart-router.git
 cd ollama-smart-router
 
 # 安裝依賴
 pip install -r requirements.txt
 
-# 可選: 安裝雲端API支援
-pip install openai
+# 驗證安裝
+python check_env.py
 ```
 
-### 基礎用法
+---
+
+## 使用方法
+
+### 命令列（推薦新手）
+
+```bash
+# 自動路由（最簡單）
+python -m src "寫個Python快速排序"
+
+# 互動模式（像ChatGPT一樣對話）
+python -m src -i
+
+# 強制使用 GPU
+python -m src "問題" --strategy gpu
+
+# 強制使用雲端（需要配置API金鑰）
+python -m src "複雜問題" --strategy cloud
+
+# 查看硬體狀態
+python -m src --status
+
+# 列出可用模型
+python -m src --list-models
+```
+
+### Python 程式碼中使用
 
 ```python
 from src.router import SmartRouter
 
+# 創建路由器
 router = SmartRouter()
 
-# 自動路由 - 系統會根據任務複雜度自動選擇最佳路徑
+# 自動路由
 result = router.route("寫個Python快速排序")
 print(result.content)
+
+# 查看這次用了哪個路徑
+print(f"路由到: {result.source}")  # local_gpu / local_cpu / cloud
+print(f"耗時: {result.latency:.2f}秒")
 ```
 
-### 命令列使用
+### 配置雲端 API（可選）
 
+**方式 1：環境變數（推薦）**
 ```bash
-# 自動路由
-python -m src "你好"
+# Windows PowerShell
+$env:DEEPSEEK_API_KEY="your-api-key-here"
 
-# 指定策略
-python -m src "複雜問題" --strategy cloud
-
-# 互動模式
-python -m src -i
-
-# 查看硬體狀態
-python -m src --status
+# Mac/Linux
+export DEEPSEEK_API_KEY="your-api-key-here"
 ```
 
----
-
-## 🧠 路由策略
-
-### 自動路由決策
-
-```
-任務類型     GPU狀態         路由目標
-─────────────────────────────────────────────
-簡單任務  →  顯存充足   →   本地小模型(GPU)
-簡單任務  →  顯存不足   →   本地小模型(CPU)
-中等任務  →  顯存充足   →   本地中模型(GPU)
-中等任務  →  顯存不足   →   本地中模型(CPU)
-複雜任務  →  API已配置  →   雲端大模型
-複雜任務  →  無API配置  →   本地大模型(CPU)
-```
-
-### 手動指定策略
-
-```python
-from src.router import RoutingStrategy
-
-# 強制使用GPU
-result = router.route("提示詞", strategy=RoutingStrategy.LOCAL_GPU)
-
-# 強制使用CPU
-result = router.route("提示詞", strategy=RoutingStrategy.LOCAL_CPU)
-
-# 強制使用雲端
-result = router.route("提示詞", strategy=RoutingStrategy.CLOUD)
-
-# 手動指定複雜度
-result = router.route("提示詞", complexity="simple")  # simple/medium/complex
-```
-
----
-
-## ⚙️ 配置
-
-### 環境變數
-
-```bash
-# 雲端API金鑰 (推薦)
-export DEEPSEEK_API_KEY="your-api-key"
-
-# 或配置其他提供商
-export OPENAI_API_KEY="your-key"
-```
-
-### 配置檔案 (config.yaml)
-
+**方式 2：配置檔案**
+編輯 `config.yaml`：
 ```yaml
-# 模型配置
-models:
-  small: { name: "gemma3:4b" }
-  medium: { name: "qwen2.5:7b" }
-  large: { name: "llama3.2:8b" }
-
-# 雲端配置
 cloud:
+  api_key: "your-api-key-here"
   base_url: "https://api.deepseek.com"
   model: "deepseek-chat"
 ```
 
 ---
 
-## 📊 複雜度檢測
+## ⚡ 核心功能
 
-系統自動分析以下維度評估任務複雜度：
-
-- **文字長度**: 長文字通常更複雜
-- **關鍵詞匹配**: 程式碼、分析、學術等關鍵詞
-- **程式碼區塊**: 包含程式碼的任務路由到更強模型
-- **推理需求**: 數學、邏輯、多步驟任務
-
-```python
-from src.complexity_analyzer import ComplexityAnalyzer
-
-analyzer = ComplexityAnalyzer()
-analysis = analyzer.analyze("寫個Python快速排序")
-
-print(analysis.complexity)      # TaskComplexity.MEDIUM
-print(analysis.confidence)      # 0.85
-print(analysis.requires_code)   # True
-```
+| 特性 | 說明 |
+|------|------|
+| 🎯 **智慧路由** | 自動分析任務複雜度，智慧選擇本地 GPU/CPU/雲端 |
+| 🎮 **顯存保護** | 即時監控 GPU 顯存，避免崩潰 |
+| 💻 **靈活降級** | GPU 不足時自動切換 CPU 推理 |
+| ☁️ **雲端兜底** | 複雜任務無縫切換 DeepSeek 等 API |
+| 📊 **複雜度分析** | 自動識別簡單/中等/複雜任務 |
 
 ---
 
-## 🎮 硬體監控
+## 常見問題
 
-```python
-from src.gpu_monitor import GPUMonitor, CPUMonitor
+### Q1: 提示 `python` 不是內部命令？
+**A:** Python 沒添加到 PATH。重新安裝 Python，**勾選 "Add Python to PATH"**。
 
-gpu = GPUMonitor()
-cpu = CPUMonitor()
+### Q2: 提示 `ollama` 連線失敗？
+**A:** 確保 Ollama 正在運行：
+- Windows: 任務欄應該有羊駝圖標
+- 命令列測試: `ollama list` 應該能列出模型
 
-# 獲取顯存資訊
-info = gpu.get_gpu_memory()
-print(f"空閒顯存: {info.free_gb:.1f}GB")
-
-# 檢查是否能執行某模型
-if gpu.can_fit_model(vram_required=6.0):
-    print("可以執行該模型")
-
-# 列印狀態
-gpu.print_status()
-cpu.print_status()
+### Q3: 提示模型不存在？
+**A:** 先下載模型：
+```bash
+ollama pull gemma3:4b    # 必須
+ollama pull qwen2.5:7b   # 推薦
 ```
+
+### Q4: 沒有 GPU 能用嗎？
+**A:** **完全可以！** 沒有 GPU 會自動使用 CPU，只是速度稍慢。
+
+### Q5: 如何只使用 CPU？
+**A:** 
+```bash
+python -m src "問題" --strategy cpu
+```
+
+### Q6: Windows 怎麼打開終端？
+**A:** 
+1. 在專案資料夾空白處按住 `Shift` + 右鍵
+2. 選擇 "在此處打開 PowerShell 視窗" 或 "終端"
 
 ---
 
@@ -180,53 +250,28 @@ cpu.print_status()
 
 ```
 ollama-smart-router/
-├── src/
-│   ├── router.py             # 智慧路由核心
-│   ├── gpu_monitor.py        # GPU/CPU監控
+├── src/                      # 原始碼
+│   ├── router.py            # 智慧路由核心
+│   ├── gpu_monitor.py       # GPU/CPU 監控
 │   ├── complexity_analyzer.py # 複雜度分析
-│   └── cli.py                # 命令列介面
+│   └── cli.py               # 命令列介面
 ├── examples/                 # 使用範例
-├── tests/                    # 測試程式碼
-├── config.yaml               # 配置檔案
-└── README.md                 # 本文件
+├── check_env.py             # 環境檢查工具 ⭐
+├── install.py               # 一鍵安裝腳本 ⭐
+├── config.yaml              # 配置檔案
+├── requirements.txt         # 依賴列表
+└── README.md                # 本文件
 ```
-
----
-
-## 🔧 推薦模型
-
-```bash
-# 小模型 - 翻譯、簡單問答
-ollama pull gemma3:4b
-
-# 中模型 - 程式碼、分析
-ollama pull qwen2.5:7b
-
-# 大模型 - 複雜推理
-ollama pull llama3.2:8b
-```
-
----
-
-## 🌐 雲端API整合
-
-支援多個雲端提供商：
-
-| 提供商 | 配置 | 價格參考 |
-|--------|------|----------|
-| DeepSeek | `https://api.deepseek.com` | 低價 |
-| 硅基流動 | `https://api.siliconflow.cn/v1` | 低價 |
-| OpenRouter | `https://openrouter.ai/api/v1` | 多模型 |
 
 ---
 
 ## 🤝 貢獻
 
-歡迎提交Issue和PR！
+歡迎提交 Issue 和 PR！
 
 ---
 
-## 📞 聯絡作者
+## 聯絡方式
 
 <img src="wechat-qr.jpg" width="200" alt="微信二維碼">
 
@@ -236,6 +281,6 @@ ollama pull llama3.2:8b
 
 ---
 
-## 📜 授權條款
+## 授權條款
 
 MIT License

@@ -4,175 +4,245 @@ Intelligent Model Router - Automatically selects the best inference path based o
 
 Let local small models handle simple tasks, and automatically switch to large models or cloud APIs for complex tasks, saving time and costs.
 
-[简体中文](README.md) | [繁體中文](README_TW.md)
+**[简体中文](README.md) | [繁體中文](README_TW.md)**
 
 ---
 
-## ✨ Key Features
+## 📋 Table of Contents
 
-| Feature | Description |
-|---------|-------------|
-| 🎯 **Smart Routing** | Automatically analyzes task complexity, intelligently selects local GPU/CPU/Cloud |
-| 🎮 **VRAM Protection** | Real-time GPU memory monitoring, prevents OOM crashes |
-| 💻 **Flexible Fallback** | Automatically switches to CPU inference when GPU is insufficient |
-| ☁️ **Cloud Backup** | Seamlessly switches to DeepSeek and other APIs for complex tasks |
-| 📊 **Complexity Analysis** | Heuristic algorithm automatically evaluates task difficulty |
-| ⚡ **Streaming Output** | Supports streaming responses for smoother experience |
+- [Requirements](#requirements)
+- [Quick Start (5 minutes)](#quick-start-5-minutes)
+- [Installation](#installation)
+- [Usage](#usage)
+- [FAQ](#faq)
+- [Contact](#contact)
 
 ---
 
-## 🚀 Quick Start
+## Requirements
 
-### Installation
+### ✅ Required
+
+| Item | Requirement | Check Method |
+|------|-------------|--------------|
+| **OS** | Windows 10+/macOS/Linux | - |
+| **Python** | 3.9 or higher | `python --version` |
+| **Ollama** | Installed and running | Ollama icon in taskbar |
+| **RAM** | At least 8GB (16GB recommended) | - |
+| **Network** | Access to GitHub and PyPI | Browser can open github.com |
+
+### ⚠️ Optional (Enhanced Features)
+
+| Item | Description |
+|------|-------------|
+| **NVIDIA GPU** | Accelerates small model inference |
+| **Cloud API Key** | DeepSeek/OpenAI for complex tasks |
+
+---
+
+## Quick Start (5 minutes)
+
+### Step 1: Check Environment (30 seconds)
+
+Open terminal/PowerShell and run:
 
 ```bash
-# Clone repository
+# Windows
+python --version
+# Should show Python 3.9.x or higher
+
+# macOS/Linux
+python3 --version
+```
+
+### Step 2: Download Project (1 minute)
+
+**Option A: With git**
+```bash
+git clone https://github.com/yourusername/ollama-smart-router.git
+cd ollama-smart-router
+```
+
+**Option B: Without git**
+1. Click the green `<> Code` button → `Download ZIP`
+2. Extract to any folder
+3. Navigate to the extracted folder
+
+### Step 3: One-Click Install (2 minutes)
+
+**Windows:**
+```powershell
+# In PowerShell
+python check_env.py      # Check environment
+python install.py        # Auto install
+```
+
+**Mac/Linux:**
+```bash
+python3 check_env.py     # Check environment
+python3 install.py       # Auto install
+```
+
+### Step 4: Test Run (1 minute)
+
+```bash
+# Check hardware status
+python -m src --status
+
+# Simple test
+python -m src "Hello, introduce yourself"
+```
+
+🎉 **Congratulations!** If you see a response, installation is successful!
+
+---
+
+## Installation (Detailed)
+
+### 1. Install Python
+
+**Check if installed:**
+```bash
+python --version      # Windows
+python3 --version     # Mac/Linux
+```
+
+**If not installed:**
+- Windows/Mac: Download from [python.org/downloads](https://python.org/downloads)
+- **Important**: Check `Add Python to PATH` during installation
+
+### 2. Install Ollama
+
+1. Visit [ollama.com](https://ollama.com)
+2. Download installer for your OS
+3. Run Ollama (icon appears in taskbar)
+4. Download at least one model:
+   ```bash
+   ollama pull gemma3:4b    # Small model, required
+   ollama pull qwen2.5:7b   # Medium model, recommended
+   ```
+
+### 3. Install This Project
+
+```bash
+# Download project
 git clone https://github.com/yourusername/ollama-smart-router.git
 cd ollama-smart-router
 
 # Install dependencies
 pip install -r requirements.txt
 
-# Optional: Install cloud API support
-pip install openai
+# Verify installation
+python check_env.py
 ```
 
-### Basic Usage
+---
+
+## Usage
+
+### Command Line (Recommended for Beginners)
+
+```bash
+# Auto routing (easiest)
+python -m src "Write a Python quick sort"
+
+# Interactive mode (chat like ChatGPT)
+python -m src -i
+
+# Force GPU usage
+python -m src "question" --strategy gpu
+
+# Force cloud (requires API key configuration)
+python -m src "complex question" --strategy cloud
+
+# Check hardware status
+python -m src --status
+
+# List available models
+python -m src --list-models
+```
+
+### Use in Python Code
 
 ```python
 from src.router import SmartRouter
 
+# Create router
 router = SmartRouter()
 
-# Auto routing - System automatically selects the best path based on task complexity
-result = router.route("Write a Python quick sort algorithm")
-print(result.content)
-```
-
-### CLI Usage
-
-```bash
 # Auto routing
-python -m src "Hello"
+result = router.route("Write a Python quick sort")
+print(result.content)
 
-# Specify strategy
-python -m src "Complex question" --strategy cloud
-
-# Interactive mode
-python -m src -i
-
-# Check hardware status
-python -m src --status
+# Check which path was used
+print(f"Routed to: {result.source}")  # local_gpu / local_cpu / cloud
+print(f"Latency: {result.latency:.2f}s")
 ```
 
----
+### Configure Cloud API (Optional)
 
-## 🧠 Routing Strategy
-
-### Auto Routing Decision
-
-```
-Task Type     GPU Status      Routing Target
-─────────────────────────────────────────────────
-Simple    →   VRAM OK    →   Local Small Model (GPU)
-Simple    →   VRAM Low   →   Local Small Model (CPU)
-Medium    →   VRAM OK    →   Local Medium Model (GPU)
-Medium    →   VRAM Low   →   Local Medium Model (CPU)
-Complex   →   API Ready  →   Cloud Large Model
-Complex   →   No API     →   Local Large Model (CPU)
-```
-
-### Manual Strategy Selection
-
-```python
-from src.router import RoutingStrategy
-
-# Force GPU usage
-result = router.route("Prompt", strategy=RoutingStrategy.LOCAL_GPU)
-
-# Force CPU usage
-result = router.route("Prompt", strategy=RoutingStrategy.LOCAL_CPU)
-
-# Force cloud usage
-result = router.route("Prompt", strategy=RoutingStrategy.CLOUD)
-
-# Manually specify complexity
-result = router.route("Prompt", complexity="simple")  # simple/medium/complex
-```
-
----
-
-## ⚙️ Configuration
-
-### Environment Variables
-
+**Option 1: Environment Variable (Recommended)**
 ```bash
-# Cloud API key (recommended)
-export DEEPSEEK_API_KEY="your-api-key"
+# Windows PowerShell
+$env:DEEPSEEK_API_KEY="your-api-key-here"
 
-# Or configure other providers
-export OPENAI_API_KEY="your-key"
+# Mac/Linux
+export DEEPSEEK_API_KEY="your-api-key-here"
 ```
 
-### Config File (config.yaml)
-
+**Option 2: Config File**
+Edit `config.yaml`:
 ```yaml
-# Model configuration
-models:
-  small: { name: "gemma3:4b" }
-  medium: { name: "qwen2.5:7b" }
-  large: { name: "llama3.2:8b" }
-
-# Cloud configuration
 cloud:
+  api_key: "your-api-key-here"
   base_url: "https://api.deepseek.com"
   model: "deepseek-chat"
 ```
 
 ---
 
-## 📊 Complexity Detection
+## ⚡ Core Features
 
-The system automatically evaluates task complexity based on:
-
-- **Text Length**: Longer texts are usually more complex
-- **Keyword Matching**: Code, analysis, academic keywords
-- **Code Blocks**: Tasks containing code are routed to stronger models
-- **Reasoning Requirements**: Math, logic, multi-step tasks
-
-```python
-from src.complexity_analyzer import ComplexityAnalyzer
-
-analyzer = ComplexityAnalyzer()
-analysis = analyzer.analyze("Write a Python quick sort")
-
-print(analysis.complexity)      # TaskComplexity.MEDIUM
-print(analysis.confidence)      # 0.85
-print(analysis.requires_code)   # True
-```
+| Feature | Description |
+|---------|-------------|
+| 🎯 **Smart Routing** | Auto-analyzes task complexity, intelligently selects local GPU/CPU/Cloud |
+| 🎮 **VRAM Protection** | Real-time GPU memory monitoring, prevents crashes |
+| 💻 **Flexible Fallback** | Auto-switches to CPU when GPU is insufficient |
+| ☁️ **Cloud Backup** | Seamlessly switches to DeepSeek and other APIs |
+| 📊 **Complexity Analysis** | Auto-identifies simple/medium/complex tasks |
 
 ---
 
-## 🎮 Hardware Monitoring
+## FAQ
 
-```python
-from src.gpu_monitor import GPUMonitor, CPUMonitor
+### Q1: Error `python` is not recognized?
+**A:** Python is not in PATH. Reinstall Python and **check "Add Python to PATH"**.
 
-gpu = GPUMonitor()
-cpu = CPUMonitor()
+### Q2: Error `ollama` connection failed?
+**A:** Ensure Ollama is running:
+- Windows: Taskbar should have Ollama icon
+- Test in terminal: `ollama list` should list models
 
-# Get VRAM info
-info = gpu.get_gpu_memory()
-print(f"Free VRAM: {info.free_gb:.1f}GB")
-
-# Check if can run a model
-if gpu.can_fit_model(vram_required=6.0):
-    print("Can run this model")
-
-# Print status
-gpu.print_status()
-cpu.print_status()
+### Q3: Error model not found?
+**A:** Download the model first:
+```bash
+ollama pull gemma3:4b    # Required
+ollama pull qwen2.5:7b   # Recommended
 ```
+
+### Q4: Can I use without GPU?
+**A:** **Absolutely!** Without GPU, it will automatically use CPU, just slightly slower.
+
+### Q5: How to use CPU only?
+**A:** 
+```bash
+python -m src "question" --strategy cpu
+```
+
+### Q6: How to open terminal on Windows?
+**A:** 
+1. In project folder, hold `Shift` + right-click
+2. Select "Open PowerShell window here" or "Terminal"
 
 ---
 
@@ -180,43 +250,18 @@ cpu.print_status()
 
 ```
 ollama-smart-router/
-├── src/
-│   ├── router.py             # Smart routing core
-│   ├── gpu_monitor.py        # GPU/CPU monitoring
+├── src/                      # Source code
+│   ├── router.py            # Smart routing core
+│   ├── gpu_monitor.py       # GPU/CPU monitoring
 │   ├── complexity_analyzer.py # Complexity analysis
-│   └── cli.py                # CLI interface
+│   └── cli.py               # CLI interface
 ├── examples/                 # Usage examples
-├── tests/                    # Test code
-├── config.yaml               # Config file
-└── README.md                 # This file
+├── check_env.py             # Environment checker ⭐
+├── install.py               # One-click installer ⭐
+├── config.yaml              # Config file
+├── requirements.txt         # Dependencies
+└── README.md                # This file
 ```
-
----
-
-## 🔧 Recommended Models
-
-```bash
-# Small model - Translation, simple Q&A
-ollama pull gemma3:4b
-
-# Medium model - Code, analysis
-ollama pull qwen2.5:7b
-
-# Large model - Complex reasoning
-ollama pull llama3.2:8b
-```
-
----
-
-## 🌐 Cloud API Integration
-
-Supports multiple cloud providers:
-
-| Provider | Config | Pricing |
-|----------|--------|---------|
-| DeepSeek | `https://api.deepseek.com` | Low cost |
-| SiliconFlow | `https://api.siliconflow.cn/v1` | Low cost |
-| OpenRouter | `https://openrouter.ai/api/v1` | Multi-model |
 
 ---
 
@@ -226,7 +271,7 @@ Issues and PRs are welcome!
 
 ---
 
-## 📞 Contact Author
+## Contact
 
 <img src="wechat-qr.jpg" width="200" alt="WeChat QR Code">
 
@@ -236,6 +281,6 @@ Issues and PRs are welcome!
 
 ---
 
-## 📜 License
+## License
 
 MIT License

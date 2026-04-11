@@ -114,10 +114,48 @@ def interactive_mode(router: SmartRouter):
             print(f"❌ 错误: {e}")
 
 
+def print_error(message):
+    """打印错误信息"""
+    print(f"\n❌ {message}\n")
+
+
+def print_tip(message):
+    """打印提示信息"""
+    print(f"💡 {message}")
+
+
+def check_ollama_connection():
+    """检查 Ollama 连接"""
+    try:
+        import ollama
+        ollama.list()
+        return True
+    except Exception as e:
+        return False
+
+
+def print_ollama_error():
+    """打印 Ollama 错误提示"""
+    print_error("无法连接到 Ollama")
+    print("可能的原因：")
+    print("  1. Ollama 未安装")
+    print("  2. Ollama 未运行（任务栏没有羊驼图标）")
+    print("\n解决方法：")
+    print("  • 下载安装: https://ollama.com")
+    print("  • 启动 Ollama 应用")
+    print("  • 命令行测试: ollama list")
+
+
 def main():
     """主入口"""
     parser = create_parser()
     args = parser.parse_args()
+    
+    # 检查 Ollama 连接（除了 --status 和 --list-models）
+    if not args.status and not args.list_models:
+        if not check_ollama_connection():
+            print_ollama_error()
+            return 1
     
     # 创建配置
     config = RouterConfig()
@@ -145,7 +183,12 @@ def main():
         return
     
     # 初始化路由器
-    router = SmartRouter(config)
+    try:
+        router = SmartRouter(config)
+    except Exception as e:
+        print_error(f"初始化失败: {e}")
+        print_tip("运行环境检查: python check_env.py")
+        return 1
     
     # 列出模型
     if args.list_models:
@@ -160,8 +203,24 @@ def main():
         return
     
     # 单次查询
-    result = router.route(args.prompt, complexity=args.complexity, strategy=strategy)
-    print(result.content)
+    try:
+        result = router.route(args.prompt, complexity=args.complexity, strategy=strategy)
+        print(result.content)
+    except Exception as e:
+        print_error(f"运行失败: {e}")
+        
+        # 提供针对性建议
+        error_msg = str(e).lower()
+        if "model" in error_msg and "not found" in error_msg:
+            print_tip("模型未找到，请下载模型: ollama pull gemma3:4b")
+        elif "connection" in error_msg:
+            print_ollama_error()
+        elif "gpu" in error_msg or "cuda" in error_msg:
+            print_tip("GPU 错误，尝试使用 CPU: python -m src '问题' --strategy cpu")
+        else:
+            print_tip("运行环境检查: python check_env.py")
+        
+        return 1
 
 
 if __name__ == "__main__":

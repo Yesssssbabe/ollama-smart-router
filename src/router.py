@@ -200,13 +200,17 @@ class SmartRouter:
                 latency=latency
             )
         except Exception as e:
-            print(f"❌ GPU推理失败: {e}，尝试CPU...")
+            error_msg = str(e).lower()
+            if "out of memory" in error_msg or "oom" in error_msg:
+                print(f"⚠️  GPU显存不足，自动切换到CPU...")
+            else:
+                print(f"⚠️  GPU推理失败: {e}，尝试CPU...")
             return self._run_local_cpu(prompt, model)
     
     def _run_local_cpu(self, prompt: str, model: Optional[str] = None) -> InferenceResult:
         """本地CPU推理"""
         model = model or self.config.medium_model
-        print(f"💻 [本地CPU] 使用模型: {model} (24核并行)")
+        print(f"💻 [本地CPU] 使用模型: {model} (多核并行)")
         
         start = time.time()
         try:
@@ -229,8 +233,15 @@ class SmartRouter:
                 latency=latency
             )
         except Exception as e:
+            error_msg = str(e).lower()
+            if "model" in error_msg and ("not found" in error_msg or "not exist" in error_msg):
+                print(f"\n❌ 模型未找到: {model}")
+                print(f"💡 请下载模型: ollama pull {model}")
+                raise RuntimeError(f"模型 {model} 未下载。运行: ollama pull {model}")
+            
             print(f"❌ CPU推理失败: {e}")
             if self.config.cloud_api_key:
+                print(f"🔄 尝试云端API...")
                 return self._run_cloud(prompt)
             raise
     
