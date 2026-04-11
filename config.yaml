@@ -1,7 +1,5 @@
 # Ollama Smart Router 配置文件
 
-# 硬件适配: U9 275HX + RTX 5060 8GB + 32GB RAM
-
 # 模型配置
 models:
   # 小模型 - 用于简单任务 (GPU)
@@ -22,7 +20,7 @@ models:
     vram_gb: 7.0
     description: "强力模型，复杂推理"
 
-# GPU阈值配置 (适配RTX 5060 8GB)
+# GPU阈值配置
 gpu_thresholds:
   # 空闲显存低于此值转CPU
   min_free_vram_gb: 4.0
@@ -48,7 +46,7 @@ cloud:
 performance:
   # 上下文长度
   num_ctx: 4096
-  # CPU线程数 (0=自动，U9 275HX会自动使用24线程)
+  # CPU线程数 (0=自动使用全部线程)
   num_thread: 0
   # GPU层数 (99=全部)
   num_gpu: 99
