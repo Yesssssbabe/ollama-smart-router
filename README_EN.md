@@ -4,7 +4,7 @@ Intelligent Model Router - Automatically selects the best inference path based o
 
 Let local small models handle simple tasks, and automatically switch to large models or cloud APIs for complex tasks, saving time and costs.
 
-**[简体中文](README.md) | [繁體中文](README_TW.md)**
+**[简体中文](README.md) | [繁體中文](README_TW.md) | [日本語](README_JP.md) | [한국어](README_KR.md) | [Español](README_ES.md)**
 
 ---
 
@@ -260,7 +260,12 @@ ollama-smart-router/
 ├── install.py               # One-click installer ⭐
 ├── config.yaml              # Config file
 ├── requirements.txt         # Dependencies
-└── README.md                # This file
+├── README.md                # Simplified Chinese documentation
+├── README_EN.md             # English documentation (this file)
+├── README_TW.md             # Traditional Chinese documentation
+├── README_JP.md             # Japanese documentation
+├── README_KR.md             # Korean documentation
+└── README_ES.md             # Spanish documentation
 ```
 
 ---

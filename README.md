@@ -4,7 +4,7 @@
 
 让本地小模型处理简单任务，复杂任务自动切换大模型或云端API，节省时间和成本。
 
-**[English](README_EN.md) | [繁體中文](README_TW.md)**
+**[English](README_EN.md) | [繁體中文](README_TW.md) | [日本語](README_JP.md) | [한국어](README_KR.md) | [Español](README_ES.md)**
 
 ---
 
@@ -279,7 +279,12 @@ ollama-smart-router/
 ├── install.py               # 一键安装脚本 ⭐
 ├── config.yaml              # 配置文件
 ├── requirements.txt         # 依赖列表
-└── README.md                # 本文件
+├── README.md                # 简体中文文档（本文件）
+├── README_EN.md             # 英文文档
+├── README_TW.md             # 繁体中文文档
+├── README_JP.md             # 日文文档
+├── README_KR.md             # 韩文文档
+└── README_ES.md             # 西班牙语文档
 ```
 
 ---
