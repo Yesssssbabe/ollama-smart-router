@@ -30,6 +30,7 @@ gpu_thresholds:
 # 云端API配置 (可选)
 cloud:
   # API密钥 - 建议通过环境变量设置: export DEEPSEEK_API_KEY="your-key"
+  # 环境变量会覆盖此处的配置
   api_key: null
   base_url: "https://api.deepseek.com"
   model: "deepseek-chat"

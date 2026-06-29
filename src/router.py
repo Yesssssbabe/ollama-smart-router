@@ -51,6 +51,11 @@ class RouterConfig:
     # 性能优化
     use_gpu_offload: bool = True  # 是否使用GPU卸载
     num_ctx: int = 4096           # 上下文长度
+    
+    # 路由行为
+    prefer_cloud_for_complex: bool = True
+    auto_fallback: bool = True
+    max_fallback_attempts: int = 2
 
 
 class InferenceResult:
@@ -140,6 +145,16 @@ class SmartRouter:
         print(f"⏱️ 总耗时: {latency:.2f}s")
         return result
     
+    @staticmethod
+    def _extract_token_count(response) -> int:
+        """从 Ollama 响应中提取 token 数量"""
+        if not isinstance(response, dict):
+            return 0
+        # Ollama 返回 prompt_eval_count + eval_count
+        prompt_tokens = response.get('prompt_eval_count', 0) or 0
+        eval_tokens = response.get('eval_count', 0) or 0
+        return int(prompt_tokens + eval_tokens)
+
     def _auto_route(self, prompt: str, complexity: str) -> InferenceResult:
         """自动路由决策"""
         gpu_mem = self.gpu_monitor.get_free_vram_gb()
@@ -168,13 +183,20 @@ class SmartRouter:
                 
         else:  # complex
             # 复杂任务：优先云端API
-            if self.config.cloud_api_key:
+            if self.config.cloud_api_key and self.config.prefer_cloud_for_complex:
                 return self._run_cloud(prompt)
-            elif cpu_mem['available_gb'] >= 6:
-                #  fallback到CPU大模型
+            elif cpu_mem['available_gb'] >= self.config.large_model_vram + 1:
+                # fallback到CPU大模型
                 return self._run_local_cpu(prompt, self.config.large_model)
-            else:
+            elif cpu_mem['available_gb'] >= self.config.medium_model_vram + 1:
+                return self._run_local_cpu(prompt, self.config.medium_model)
+            elif gpu_mem >= self.config.small_model_vram + 1:
                 return self._run_local_gpu(prompt, self.config.small_model)
+            else:
+                # 最后尝试云端，即使没有配置密钥也可能有公网模型
+                if self.config.cloud_api_key:
+                    return self._run_cloud(prompt)
+                raise RuntimeError("资源不足，无法处理复杂任务。请释放显存/内存或配置云端API密钥。")
     
     def _run_local_gpu(self, prompt: str, model: Optional[str] = None) -> InferenceResult:
         """本地GPU推理"""
@@ -197,7 +219,8 @@ class SmartRouter:
             return InferenceResult(
                 content=response['message']['content'],
                 source="local_gpu",
-                latency=latency
+                latency=latency,
+                tokens=self._extract_token_count(response)
             )
         except Exception as e:
             error_msg = str(e).lower()
@@ -205,7 +228,19 @@ class SmartRouter:
                 print(f"⚠️  GPU显存不足，自动切换到CPU...")
             else:
                 print(f"⚠️  GPU推理失败: {e}，尝试CPU...")
-            return self._run_local_cpu(prompt, model)
+            # 降级到CPU时，根据当前模型选择CPU上合适的模型
+            fallback_model = self._choose_cpu_fallback_model(model)
+            return self._run_local_cpu(prompt, fallback_model)
+
+    def _choose_cpu_fallback_model(self, model: str) -> str:
+        """根据GPU模型选择对应的CPU fallback模型"""
+        if model == self.config.small_model:
+            return self.config.small_model
+        elif model == self.config.medium_model:
+            return self.config.medium_model
+        else:
+            # 大模型GPU失败，先尝试中模型
+            return self.config.medium_model
     
     def _run_local_cpu(self, prompt: str, model: Optional[str] = None) -> InferenceResult:
         """本地CPU推理"""
@@ -230,7 +265,8 @@ class SmartRouter:
             return InferenceResult(
                 content=response['message']['content'],
                 source="local_cpu",
-                latency=latency
+                latency=latency,
+                tokens=self._extract_token_count(response)
             )
         except Exception as e:
             error_msg = str(e).lower()
@@ -266,7 +302,8 @@ class SmartRouter:
             return InferenceResult(
                 content=response.choices[0].message.content,
                 source="cloud",
-                latency=latency
+                latency=latency,
+                tokens=response.usage.total_tokens if response.usage else 0
             )
         except Exception as e:
             print(f"❌ 云端API失败: {e}")
@@ -275,16 +312,17 @@ class SmartRouter:
     
     def print_stats(self):
         """打印统计信息"""
-        total = sum(self.stats.values()) - self.stats["total_latency"]
+        total = self.stats["gpu_calls"] + self.stats["cpu_calls"] + self.stats["cloud_calls"]
         if total == 0:
             print("暂无统计信息")
             return
-            
+
         print("\n📈 使用统计:")
         print(f"   GPU调用: {self.stats['gpu_calls']} ({self.stats['gpu_calls']/total:.0%})")
         print(f"   CPU调用: {self.stats['cpu_calls']} ({self.stats['cpu_calls']/total:.0%})")
         print(f"   云端调用: {self.stats['cloud_calls']} ({self.stats['cloud_calls']/total:.0%})")
         avg_latency = self.stats['total_latency'] / max(1, total)
+        print(f"   总耗时: {self.stats['total_latency']:.2f}s")
         print(f"   平均延迟: {avg_latency:.2f}s")
     
     def list_available_models(self) -> List[str]:

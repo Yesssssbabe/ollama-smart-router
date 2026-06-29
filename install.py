@@ -15,9 +15,13 @@ def run_command(cmd, description):
     print(f"   运行: {cmd}")
     
     try:
+        # 使用列表形式传递命令，避免 shell=True 带来的注入风险
+        if isinstance(cmd, str):
+            cmd_parts = cmd.split()
+        else:
+            cmd_parts = list(cmd)
         result = subprocess.run(
-            cmd,
-            shell=True,
+            cmd_parts,
             capture_output=True,
             text=True,
             check=True
@@ -38,23 +42,23 @@ def install_dependencies():
     
     # 升级 pip
     run_command(
-        f"{sys.executable} -m pip install --upgrade pip",
+        [sys.executable, "-m", "pip", "install", "--upgrade", "pip"],
         "升级 pip"
     )
-    
+
     # 安装依赖
     if not run_command(
-        f"{sys.executable} -m pip install -r requirements.txt",
+        [sys.executable, "-m", "pip", "install", "-r", "requirements.txt"],
         "安装依赖包"
     ):
         return False
-    
+
     # 可选：安装 openai
     print("\n📦 是否安装云端 API 支持 (openai)? [y/N]", end=" ")
     choice = input().strip().lower()
     if choice in ('y', 'yes'):
         run_command(
-            f"{sys.executable} -m pip install openai",
+            [sys.executable, "-m", "pip", "install", "openai"],
             "安装 openai"
         )
     

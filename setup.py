@@ -41,8 +41,8 @@ setup(
     },
     entry_points={
         "console_scripts": [
-            "osr=src.cli:main",
-            "ollama-router=src.cli:main",
+            "osr=cli:main",
+            "ollama-router=cli:main",
         ],
     },
 )
