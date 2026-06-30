@@ -68,48 +68,51 @@ def main():
             print("   请检查 Ollama 是否已安装并运行")
             sys.exit(1)
         
-        test_cases = [
-            ("你好，请自我介绍", "simple"),
-            ("写个Python斐波那契函数", "code"),
-            ("分析快速排序的时间复杂度", "analysis"),
-        ]
-        
-        results = {}
-        
-        for prompt, category in test_cases:
-            try:
-                print(f"\n{'='*60}")
-                print(f"测试类别: {category}")
-                print(f"{'='*60}")
-                
-                # 测试不同策略
-                strategies = [
-                    (RoutingStrategy.AUTO, "自动路由"),
-                    (RoutingStrategy.LOCAL_GPU, "GPU强制"),
-                    (RoutingStrategy.LOCAL_CPU, "CPU强制"),
-                ]
-                
-                for strategy, strategy_name in strategies:
-                    key = f"{category}_{strategy_name}"
-                    try:
-                        avg = benchmark_task(router, prompt, strategy, strategy_name)
-                        results[key] = avg
-                    except Exception as e:
-                        print(f"  错误: {type(e).__name__}: {e}")
-                        results[key] = None
-            except Exception as e:
-                print(f"⚠️  测试类别 '{category}' 失败: {type(e).__name__}: {e}")
-                continue
-        
-        # 汇总
-        print(f"\n{'='*60}")
-        print("测试结果汇总")
-        print(f"{'='*60}")
-        for key, value in results.items():
-            if value is not None:
-                print(f"{key:30}: {value:.2f}s")
-            else:
-                print(f"{key:30}: 失败")
+        try:
+            test_cases = [
+                ("你好，请自我介绍", "simple"),
+                ("写个Python斐波那契函数", "code"),
+                ("分析快速排序的时间复杂度", "analysis"),
+            ]
+            
+            results = {}
+            
+            for prompt, category in test_cases:
+                try:
+                    print(f"\n{'='*60}")
+                    print(f"测试类别: {category}")
+                    print(f"{'='*60}")
+                    
+                    # 测试不同策略
+                    strategies = [
+                        (RoutingStrategy.AUTO, "自动路由"),
+                        (RoutingStrategy.LOCAL_GPU, "GPU强制"),
+                        (RoutingStrategy.LOCAL_CPU, "CPU强制"),
+                    ]
+                    
+                    for strategy, strategy_name in strategies:
+                        key = f"{category}_{strategy_name}"
+                        try:
+                            avg = benchmark_task(router, prompt, strategy, strategy_name)
+                            results[key] = avg
+                        except Exception as e:
+                            print(f"  错误: {type(e).__name__}: {e}")
+                            results[key] = None
+                except Exception as e:
+                    print(f"⚠️  测试类别 '{category}' 失败: {type(e).__name__}: {e}")
+                    continue
+            
+            # 汇总
+            print(f"\n{'='*60}")
+            print("测试结果汇总")
+            print(f"{'='*60}")
+            for key, value in results.items():
+                if value is not None:
+                    print(f"{key:30}: {value:.2f}s")
+                else:
+                    print(f"{key:30}: 失败")
+        finally:
+            router.close()
     
     except KeyboardInterrupt:
         print("\n\n  ⚠️  基准测试被用户中断")

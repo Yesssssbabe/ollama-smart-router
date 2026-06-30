@@ -12,7 +12,7 @@ import sys
 
 # 初始化日志系统
 # 如果 stdout 编码不是 UTF-8，尝试重新配置（Windows 兼容性）
-if sys.platform == "win32":
+if sys.platform == "win32" and sys.stdout is not None and hasattr(sys.stdout, "reconfigure"):
     try:
         sys.stdout.reconfigure(encoding='utf-8')
     except (AttributeError, OSError):

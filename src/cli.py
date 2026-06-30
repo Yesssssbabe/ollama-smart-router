@@ -16,22 +16,32 @@ import argparse
 import getpass
 import os
 import sys
+from pathlib import Path
 from typing import Optional
 
-from .router import SmartRouter, RouterConfig, RoutingStrategy
+try:
+    import readline
+    readline.parse_and_bind("tab: complete")
+except Exception:
+    readline = None  # Windows 等环境可能缺少 readline
+
+from .router import SmartRouter, RouterConfig, RoutingStrategy, VALID_MODEL
 from .gpu_monitor import GPUMonitor, CPUMonitor
 from .config_loader import config_from_yaml, merge_env_vars
 
-MAX_PROMPT_LENGTH = 100000  # 交互模式最大输入长度（约100KB）
+MAX_PROMPT_LENGTH = 200000  # 交互模式最大输入长度（与路由限制对齐，约200KB）
 
 
 def validate_config_path(path: str) -> str:
-    """验证配置文件路径，防止路径遍历攻击"""
-    abs_path = os.path.abspath(path)
-    cwd = os.path.abspath(os.getcwd())
-    home = os.path.expanduser("~")
+    """验证配置文件路径，防止路径遍历和符号链接攻击"""
+    real_path = Path(os.path.realpath(path)).resolve()
+    real_cwd = Path(os.getcwd()).resolve()
+    real_home = Path(os.path.expanduser("~")).resolve()
     # 允许当前工作目录下的文件，或用户主目录下的配置文件
-    if not abs_path.startswith(cwd) and not abs_path.startswith(home):
+    if not (
+        real_path.is_relative_to(real_cwd)
+        or real_path.is_relative_to(real_home)
+    ):
         raise argparse.ArgumentTypeError(
             f"配置文件路径必须在当前工作目录或用户主目录下: {path}"
         )
@@ -115,8 +125,8 @@ def interactive_mode(router: SmartRouter):
     print("命令: /quit (退出), /status (状态), /stats (统计), /setkey (设置API密钥), /help (帮助)")
     print("-" * 50)
 
-    while True:
-        try:
+    try:
+        while True:
             try:
                 prompt = input("\n你: ").strip()
             except EOFError:
@@ -174,14 +184,15 @@ def interactive_mode(router: SmartRouter):
             result = router.route(prompt)
             print(f"\n🤖 ({result.source}): {result.content}")
 
-        except KeyboardInterrupt:
-            print("\n再见!")
-            break
-        except (SystemExit, GeneratorExit):
-            # 系统退出异常应继续向上传播，不得吞没
-            raise
-        except Exception as e:
-            print(f"❌ 错误: {e}")
+    except KeyboardInterrupt:
+        print("\n再见!")
+    except (SystemExit, GeneratorExit):
+        # 系统退出异常应继续向上传播，不得吞没
+        raise
+    except Exception as e:
+        print(f"❌ 错误: {e}")
+    finally:
+        router.close()
 
 
 def print_error(message):
@@ -255,6 +266,8 @@ def load_config(args) -> RouterConfig:
     # 确保空字符串和纯空格字符串不会覆盖有效配置
     if args.model is not None and args.model.strip():
         model = args.model.strip()
+        if not VALID_MODEL.match(model):
+            raise ValueError(f"模型名格式不合法: {model}")
         # 如果用户指定了模型，强制使用该模型作为 small/medium/large
         config.small_model = model
         config.medium_model = model
@@ -306,44 +319,47 @@ def main() -> int:
         print_tip("运行环境检查: python check_env.py")
         return 1
 
-    # 列出模型
-    if args.list_models:
-        print("可用模型:")
-        for model in router.list_available_models():
-            print(f"  - {model}")
-        return 0
-
-    # 检查 Ollama 连接（云端策略不需要）
-    if strategy != RoutingStrategy.CLOUD and not check_ollama_connection():
-        print_ollama_error()
-        return 1
-
-    # 交互模式
-    if args.interactive or not args.prompt:
-        interactive_mode(router)
-        return 0
-
-    # 单次查询
     try:
-        result = router.route(args.prompt, complexity=args.complexity, strategy=strategy)
-        print(result.content)
-    except Exception as e:
-        print_error(f"运行失败: {e}")
+        # 列出模型
+        if args.list_models:
+            print("可用模型:")
+            for model in router.list_available_models():
+                print(f"  - {model}")
+            return 0
 
-        # 提供针对性建议
-        error_msg = str(e).lower()
-        if "model" in error_msg and "not found" in error_msg:
-            print_tip("模型未找到，请下载模型: ollama pull gemma3:4b")
-        elif "connection" in error_msg:
+        # 检查 Ollama 连接（云端策略不需要）
+        if strategy != RoutingStrategy.CLOUD and not check_ollama_connection():
             print_ollama_error()
-        elif "gpu" in error_msg or "cuda" in error_msg:
-            print_tip("GPU 错误，尝试使用 CPU: python -m src '问题' --strategy cpu")
-        else:
-            print_tip("运行环境检查: python check_env.py")
+            return 1
 
-        return 1
+        # 交互模式
+        if args.interactive or not args.prompt:
+            interactive_mode(router)
+            return 0
 
-    return 0
+        # 单次查询
+        try:
+            result = router.route(args.prompt, complexity=args.complexity, strategy=strategy)
+            print(result.content)
+        except Exception as e:
+            print_error(f"运行失败: {e}")
+
+            # 提供针对性建议
+            error_msg = str(e).lower()
+            if "model" in error_msg and "not found" in error_msg:
+                print_tip("模型未找到，请下载模型: ollama pull gemma3:4b")
+            elif "connection" in error_msg:
+                print_ollama_error()
+            elif "gpu" in error_msg or "cuda" in error_msg:
+                print_tip("GPU 错误，尝试使用 CPU: python -m src '问题' --strategy cpu")
+            else:
+                print_tip("运行环境检查: python check_env.py")
+
+            return 1
+
+        return 0
+    finally:
+        router.close()
 
 
 if __name__ == "__main__":

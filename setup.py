@@ -6,6 +6,7 @@ Ollama Smart Router - 智能模型调度器
 - Critical-2: 添加 README.md / requirements.txt 文件缺失保护
 """
 
+import os
 from setuptools import setup, find_packages
 
 # 安全读取文件，带缺失保护
@@ -31,12 +32,12 @@ except FileNotFoundError:
 setup(
     name="ollama-smart-router",
     version="0.1.0",
-    author="Your Name",
-    author_email="your.email@example.com",
+    author=os.getenv("PACKAGE_AUTHOR", "Anonymous"),
+    author_email=os.getenv("PACKAGE_AUTHOR_EMAIL", "anonymous@example.com"),
     description="智能模型调度器 - 根据硬件状态自动选择最佳推理路径",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/yourusername/ollama-smart-router",
+    url=os.getenv("PACKAGE_URL", "https://github.com/ollama-smart-router/ollama-smart-router"),
     packages=find_packages(where="src"),
     package_dir={"": "src"},
     classifiers=[

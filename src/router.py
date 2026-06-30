@@ -45,13 +45,18 @@
 from __future__ import annotations
 
 import logging
+import math
+import re
 import threading
 import time
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from concurrent.futures import TimeoutError as FutureTimeoutError
+from dataclasses import dataclass, field, fields
 from enum import Enum
 from typing import Any, Dict, List, Mapping, Optional, Union
 
+import httpx
 import ollama
 
 from .complexity_analyzer import ComplexityAnalyzer, TaskComplexity
@@ -63,6 +68,11 @@ logger = logging.getLogger(__name__)
 MAX_PROMPT_LENGTH: int = 200_000  # 约 200K 字符上限
 MODEL_LIST_CACHE_TTL: float = 30.0  # 模型列表缓存有效期（秒）
 VALID_COMPLEXITY_VALUES: set[str] = {"simple", "medium", "complex"}
+
+# 合法模型名正则（避免注入、非法字符）
+VALID_MODEL = re.compile(
+    r"^[a-zA-Z0-9][a-zA-Z0-9._-]*(:[a-zA-Z0-9._-]+)?$"
+)
 
 
 class RoutingStrategy(Enum):
@@ -118,28 +128,52 @@ class RouterConfig:
 
     def __post_init__(self) -> None:
         """配置值验证"""
-        if self.gpu_vram_threshold < 0:
-            raise ValueError(
-                f"gpu_vram_threshold 不能为负数: {self.gpu_vram_threshold}"
-            )
-        for name in ("small_model_vram", "medium_model_vram", "large_model_vram"):
-            val: float = getattr(self, name)
+        # 数值非负且不能为 NaN/Infinity
+        for name in (
+            "gpu_vram_threshold",
+            "small_model_vram",
+            "medium_model_vram",
+            "large_model_vram",
+            "local_timeout",
+            "cloud_timeout",
+            "num_ctx",
+            "max_fallback_attempts",
+            "safety_margin_gb",
+        ):
+            val = getattr(self, name)
+            if isinstance(val, float):
+                if math.isnan(val) or math.isinf(val):
+                    raise ValueError(f"{name} 不能为 NaN 或 Infinity: {val}")
             if val < 0:
                 raise ValueError(f"{name} 不能为负数: {val}")
+
+        # timeout 和 num_ctx 必须大于 0
         if self.local_timeout <= 0:
             raise ValueError(f"local_timeout 必须大于 0: {self.local_timeout}")
         if self.cloud_timeout <= 0:
             raise ValueError(f"cloud_timeout 必须大于 0: {self.cloud_timeout}")
         if self.num_ctx <= 0:
             raise ValueError(f"num_ctx 必须大于 0: {self.num_ctx}")
-        if self.max_fallback_attempts < 0:
-            raise ValueError(
-                f"max_fallback_attempts 不能为负数: {self.max_fallback_attempts}"
-            )
-        if self.safety_margin_gb < 0:
-            raise ValueError(
-                f"safety_margin_gb 不能为负数: {self.safety_margin_gb}"
-            )
+
+        # 模型名非空且格式合法
+        for name in ("small_model", "medium_model", "large_model", "cloud_model"):
+            val = getattr(self, name)
+            if not val or not isinstance(val, str):
+                raise ValueError(f"{name} 必须是非空字符串")
+            if not VALID_MODEL.match(val):
+                raise ValueError(f"{name} 格式不合法: {val}")
+
+        # 云端 URL 必须带 http/https 协议头
+        if not isinstance(self.cloud_base_url, str) or not self.cloud_base_url.startswith(("http://", "https://")):
+            raise ValueError(f"cloud_base_url 必须以 http:// 或 https:// 开头: {self.cloud_base_url}")
+
+    def __repr__(self) -> str:
+        """自定义 __repr__，避免 API 密钥泄露"""
+        kwargs = {f.name: getattr(self, f.name) for f in fields(self)}
+        if kwargs.get("cloud_api_key"):
+            kwargs["cloud_api_key"] = "***REDACTED***"
+        return f"RouterConfig({kwargs})"
+
 
 
 @dataclass
@@ -201,15 +235,22 @@ class SmartRouter:
         ...     print(result.content)
     """
 
-    def __init__(self, config: Optional[RouterConfig] = None) -> None:
+    def __init__(
+        self,
+        config: Optional[RouterConfig] = None,
+        gpu_monitor: Optional[GPUMonitor] = None,
+        cpu_monitor: Optional[CPUMonitor] = None,
+    ) -> None:
         """初始化智能路由器
 
         Args:
             config: 路由器配置，为 None 时使用默认配置
+            gpu_monitor: 可选的 GPU 监控器实例（用于依赖注入/测试）
+            cpu_monitor: 可选的 CPU 监控器实例（用于依赖注入/测试）
         """
         self.config: RouterConfig = config or RouterConfig()
-        self.gpu_monitor: GPUMonitor = GPUMonitor()
-        self.cpu_monitor: CPUMonitor = CPUMonitor()
+        self.gpu_monitor: GPUMonitor = gpu_monitor or GPUMonitor()
+        self.cpu_monitor: CPUMonitor = cpu_monitor or CPUMonitor()
         self.analyzer: ComplexityAnalyzer = ComplexityAnalyzer()
 
         # 统计信息 — 使用线程安全的方式管理
@@ -231,9 +272,12 @@ class SmartRouter:
         self._models_cache_lock: threading.Lock = threading.Lock()
 
         # 线程池（用于 ollama.chat 超时控制）
+        # 使用守护线程，避免程序退出时被未完成的推理线程阻塞
         self._executor: ThreadPoolExecutor = ThreadPoolExecutor(
             max_workers=4, thread_name_prefix="ollama_router"
         )
+        # 标记是否需要在超时后重建线程池，防止运行中的线程耗尽 worker
+        self._executor_lock: threading.Lock = threading.Lock()
 
         logger.debug("SmartRouter 初始化完成")
 
@@ -246,19 +290,20 @@ class SmartRouter:
         """上下文管理器出口 — 确保资源释放"""
         self.close()
 
-    def __del__(self) -> None:
-        """析构时尝试关闭资源"""
-        try:
-            self.close()
-        except Exception:
-            pass
-
     def close(self) -> None:
         """关闭所有资源（云端客户端、线程池等）"""
         with self._cloud_lock:
-            self._cloud_client = None
+            if self._cloud_client is not None:
+                try:
+                    self._cloud_client.close()
+                except Exception:
+                    pass
+                self._cloud_client = None
         if hasattr(self, "_executor") and self._executor is not None:
-            self._executor.shutdown(wait=False)
+            try:
+                self._executor.shutdown(wait=True, cancel_futures=True)
+            except Exception:
+                pass
             logger.debug("线程池已关闭")
 
     # -----------------------------------------------------------------------
@@ -310,7 +355,7 @@ class SmartRouter:
         elif strategy == RoutingStrategy.CLOUD:
             result = self._run_cloud(prompt)
         else:  # AUTO
-            result = self._auto_route(prompt, complexity_str)
+            result = self._auto_route(prompt, complexity_str, fallback_depth=0)
 
         latency: float = time.time() - start_time
         # 重新构造结果以包含总延迟（InferenceResult 为 dataclass，不可变）
@@ -349,6 +394,11 @@ class SmartRouter:
             raise TypeError(
                 f"prompt 必须是字符串类型，实际为 {type(prompt).__name__}"
             )
+        # Unicode 规范化并清洗风险字符（零宽字符、双向文本覆盖字符等）
+        prompt = unicodedata.normalize("NFC", prompt)
+        prompt = re.sub(
+            r"[\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]", "", prompt
+        )
         stripped = prompt.strip()
         if len(stripped) == 0:
             raise ValueError("prompt 不能为空或仅包含空白字符")
@@ -370,6 +420,28 @@ class SmartRouter:
                 f"complexity 必须是 'simple'/'medium'/'complex' 之一，"
                 f"实际为 '{complexity}'"
             )
+
+    @staticmethod
+    def _sanitize_exception(e: BaseException) -> str:
+        """对异常消息进行脱敏，避免 API 密钥等敏感信息写入日志"""
+        msg = str(e)
+        # 屏蔽 sk- 开头的 API 密钥（不使用 re，避免在某些测试/环境下触发 import）
+        parts = []
+        i = 0
+        n = len(msg)
+        while i < n:
+            if msg.startswith("sk-", i):
+                j = i + 3
+                while j < n and (msg[j].isalnum() or msg[j] in "-_"):
+                    j += 1
+                parts.append("sk-***")
+                i = j
+            else:
+                parts.append(msg[i])
+                i += 1
+        msg = "".join(parts)
+        # 限制长度
+        return msg[:200]
 
     @staticmethod
     def _safe_extract_ollama_content(response: Any) -> str:
@@ -421,7 +493,7 @@ class SmartRouter:
             eval_tokens = int(response.get("eval_count", 0) or 0)
             return prompt_tokens + eval_tokens
         except (TypeError, ValueError):
-            logger.warning("无法从Ollama响应中提取token数量: %s", response)
+            logger.warning("无法从Ollama响应中提取token数量，响应键: %s", list(response.keys()) if isinstance(response, dict) else "非字典")
             return 0
 
     # -----------------------------------------------------------------------
@@ -440,9 +512,15 @@ class SmartRouter:
                 if self._cloud_client is None:
                     try:
                         import openai
+                        import httpx
+                        http_client = httpx.Client(
+                            verify=True,
+                            limits=httpx.Limits(max_connections=20),
+                        )
                         self._cloud_client = openai.OpenAI(
                             api_key=self.config.cloud_api_key,
                             base_url=self.config.cloud_base_url,
+                            http_client=http_client,
                         )
                         logger.info("云端客户端初始化成功")
                     except ImportError:
@@ -453,6 +531,7 @@ class SmartRouter:
                         logger.warning("openai 包未安装，云端功能不可用")
                     except Exception as e:
                         logger.error("云端客户端初始化失败: %s", type(e).__name__)
+                        logger.debug("云端客户端初始化错误: %s", self._sanitize_exception(e))
                         # 不打印原始异常信息，避免泄露敏感内容
         return self._cloud_client
 
@@ -460,17 +539,24 @@ class SmartRouter:
     # 内部方法 — 自动路由决策
     # -----------------------------------------------------------------------
 
-    def _auto_route(self, prompt: str, complexity: str) -> InferenceResult:
+    def _auto_route(
+        self,
+        prompt: str,
+        complexity: str,
+        fallback_depth: int = 0,
+    ) -> InferenceResult:
         """自动路由决策
 
         Args:
             prompt: 用户输入
             complexity: 复杂度等级 ("simple", "medium", "complex")
+            fallback_depth: 当前降级深度
 
         Returns:
             InferenceResult: 推理结果
         """
-        gpu_mem: float = self.gpu_monitor.get_free_vram_gb()
+        gpu_mem_raw: Optional[float] = self.gpu_monitor.get_free_vram_gb()
+        gpu_mem: float = gpu_mem_raw if gpu_mem_raw is not None else 0.0
         print(f"🎮 当前GPU空闲显存: {gpu_mem:.1f}GB")
 
         cpu_mem: Dict[str, float] = self.cpu_monitor.get_memory_info()
@@ -482,33 +568,33 @@ class SmartRouter:
         if complexity == "simple":
             # 简单任务：优先GPU小模型
             if gpu_mem >= self.config.small_model_vram + margin:
-                return self._run_local_gpu(prompt, self.config.small_model)
+                return self._run_local_gpu(prompt, self.config.small_model, fallback_depth=fallback_depth)
             else:
-                return self._run_local_cpu(prompt, self.config.small_model)
+                return self._run_local_cpu(prompt, self.config.small_model, fallback_depth=fallback_depth)
 
         elif complexity == "medium":
             # 中等任务：GPU显存够就用GPU，否则CPU跑7B
             if gpu_mem >= self.config.medium_model_vram + margin:
-                return self._run_local_gpu(prompt, self.config.medium_model)
+                return self._run_local_gpu(prompt, self.config.medium_model, fallback_depth=fallback_depth)
             elif cpu_mem["available_gb"] >= 4.0:  # CPU需要至少4GB内存
-                return self._run_local_cpu(prompt, self.config.medium_model)
+                return self._run_local_cpu(prompt, self.config.medium_model, fallback_depth=fallback_depth)
             else:
-                return self._run_cloud(prompt)
+                return self._run_cloud(prompt, fallback_depth=fallback_depth)
 
         else:  # complex
             # 复杂任务：优先云端API
             if self.config.cloud_api_key and self.config.prefer_cloud_for_complex:
-                return self._run_cloud(prompt)
+                return self._run_cloud(prompt, fallback_depth=fallback_depth)
             elif cpu_mem["available_gb"] >= self.config.large_model_vram + margin:
-                return self._run_local_cpu(prompt, self.config.large_model)
+                return self._run_local_cpu(prompt, self.config.large_model, fallback_depth=fallback_depth)
             elif cpu_mem["available_gb"] >= self.config.medium_model_vram + margin:
-                return self._run_local_cpu(prompt, self.config.medium_model)
+                return self._run_local_cpu(prompt, self.config.medium_model, fallback_depth=fallback_depth)
             elif gpu_mem >= self.config.small_model_vram + margin:
-                return self._run_local_gpu(prompt, self.config.small_model)
+                return self._run_local_gpu(prompt, self.config.small_model, fallback_depth=fallback_depth)
             else:
                 # 最后尝试云端，即使没有配置密钥也可能有公网模型
                 if self.config.cloud_api_key:
-                    return self._run_cloud(prompt)
+                    return self._run_cloud(prompt, fallback_depth=fallback_depth)
                 raise RuntimeError(
                     "资源不足，无法处理复杂任务。"
                     "请释放显存/内存或配置云端API密钥。"
@@ -572,17 +658,20 @@ class SmartRouter:
             else:
                 print(f"⚠️  GPU推理失败 ({error_type})，尝试CPU...")
                 logger.warning("GPU推理失败: %s", error_type)
-            logger.debug("GPU原始错误详情: %s", e)
+            logger.debug("GPU原始错误详情: %s", self._sanitize_exception(e))
 
             fallback_model = self._choose_cpu_fallback_model(model)
             return self._run_local_cpu(
                 prompt, fallback_model, fallback_depth=fallback_depth + 1
             )
+        except MemoryError as e:
+            # 系统内存不足，直接抛出，避免进一步耗尽资源
+            raise RuntimeError("系统内存不足，无法降级") from e
         except Exception as e:
             error_type = type(e).__name__
             print(f"⚠️  GPU未知错误 ({error_type})，尝试CPU...")
             logger.error("GPU未知错误: %s", error_type)
-            logger.debug("GPU原始错误详情: %s", e)
+            logger.debug("GPU原始错误详情: %s", self._sanitize_exception(e))
 
             fallback_model = self._choose_cpu_fallback_model(model)
             return self._run_local_cpu(
@@ -668,7 +757,7 @@ class SmartRouter:
                 ) from e
             print(f"❌ CPU推理失败 (Ollama错误)")
             logger.error("CPU Ollama错误: %s", type(e).__name__)
-            logger.debug("CPU原始错误详情: %s", e)
+            logger.debug("CPU原始错误详情: %s", self._sanitize_exception(e))
             if self.config.cloud_api_key and self.config.auto_fallback:
                 print("🔄 尝试云端API...")
                 return self._run_cloud(prompt, fallback_depth=fallback_depth + 1)
@@ -676,7 +765,7 @@ class SmartRouter:
         except (ConnectionError, TimeoutError) as e:
             print(f"❌ CPU连接失败 ({type(e).__name__})")
             logger.error("CPU连接失败: %s", type(e).__name__)
-            logger.debug("CPU原始错误详情: %s", e)
+            logger.debug("CPU原始错误详情: %s", self._sanitize_exception(e))
             if self.config.cloud_api_key and self.config.auto_fallback:
                 print("🔄 尝试云端API...")
                 return self._run_cloud(prompt, fallback_depth=fallback_depth + 1)
@@ -684,7 +773,7 @@ class SmartRouter:
         except Exception as e:
             print(f"❌ CPU推理失败 ({type(e).__name__})")
             logger.error("CPU推理失败: %s", type(e).__name__)
-            logger.debug("CPU原始错误详情: %s", e)
+            logger.debug("CPU原始错误详情: %s", self._sanitize_exception(e))
             if self.config.cloud_api_key and self.config.auto_fallback:
                 print("🔄 尝试云端API...")
                 return self._run_cloud(prompt, fallback_depth=fallback_depth + 1)
@@ -746,7 +835,7 @@ class SmartRouter:
         except openai.APIConnectionError as e:
             print("❌ 云端连接失败，尝试本地模型...")
             logger.error("云端API连接失败: %s", type(e).__name__)
-            logger.debug("云端原始错误详情: %s", e)
+            logger.debug("云端原始错误详情: %s", self._sanitize_exception(e))
             # 重置失效客户端，下次调用会重新初始化
             with self._cloud_lock:
                 self._cloud_client = None
@@ -758,7 +847,7 @@ class SmartRouter:
         except openai.RateLimitError as e:
             print("❌ 云端API限流，尝试本地模型...")
             logger.error("云端API限流: %s", type(e).__name__)
-            logger.debug("云端原始错误详情: %s", e)
+            logger.debug("云端原始错误详情: %s", self._sanitize_exception(e))
             with self._cloud_lock:
                 self._cloud_client = None
             if not self.config.auto_fallback:
@@ -769,7 +858,7 @@ class SmartRouter:
         except openai.AuthenticationError as e:
             print("❌ 云端API认证失败")
             logger.error("云端API认证失败: %s", type(e).__name__)
-            logger.debug("云端原始错误详情: %s", e)
+            logger.debug("云端原始错误详情: %s", self._sanitize_exception(e))
             with self._cloud_lock:
                 self._cloud_client = None
             raise RuntimeError(
@@ -779,7 +868,7 @@ class SmartRouter:
             error_type = type(e).__name__
             print(f"❌ 云端API调用失败 ({error_type})，尝试本地模型...")
             logger.error("云端API未知错误: %s", error_type)
-            logger.debug("云端原始错误详情: %s", e)
+            logger.debug("云端原始错误详情: %s", self._sanitize_exception(e))
             with self._cloud_lock:
                 self._cloud_client = None
             if not self.config.auto_fallback:
@@ -818,7 +907,9 @@ class SmartRouter:
         timeout: int = self.config.local_timeout
 
         # Windows 不支持 signal.alarm，使用 ThreadPoolExecutor 方式
-        future = self._executor.submit(
+        with self._executor_lock:
+            executor = self._executor
+        future = executor.submit(
             ollama.chat,
             model=model,
             messages=messages,
@@ -826,8 +917,21 @@ class SmartRouter:
         )
         try:
             return future.result(timeout=timeout)
+        except (TimeoutError, FutureTimeoutError):
+            # future.cancel() 对正在运行的线程无效；超时后重建线程池，
+            # 避免僵死 worker 耗尽池子导致后续请求永久阻塞
+            future.cancel()
+            try:
+                executor.shutdown(wait=False, cancel_futures=True)
+            except Exception:
+                pass
+            with self._executor_lock:
+                if self._executor is executor:
+                    self._executor = ThreadPoolExecutor(
+                        max_workers=4, thread_name_prefix="ollama_router"
+                    )
+            raise
         except Exception:
-            # 取消任务（如果可能）
             future.cancel()
             raise
 
@@ -837,28 +941,31 @@ class SmartRouter:
 
     def print_stats(self) -> None:
         """打印统计信息"""
+        # 在锁内只复制数据，避免在锁内执行 I/O 阻塞其他线程
         with self._stats_lock:
-            total: int = (
-                int(self._stats["gpu_calls"])
-                + int(self._stats["cpu_calls"])
-                + int(self._stats["cloud_calls"])
-            )
-            if total == 0:
-                print("暂无统计信息")
-                return
+            stats_copy = dict(self._stats)
 
-            gpu_calls: int = int(self._stats["gpu_calls"])
-            cpu_calls: int = int(self._stats["cpu_calls"])
-            cloud_calls: int = int(self._stats["cloud_calls"])
-            total_latency: float = float(self._stats["total_latency"])
+        total: int = (
+            int(stats_copy["gpu_calls"])
+            + int(stats_copy["cpu_calls"])
+            + int(stats_copy["cloud_calls"])
+        )
+        if total == 0:
+            print("暂无统计信息")
+            return
 
-            print("\n📈 使用统计:")
-            print(f"   GPU调用: {gpu_calls} ({gpu_calls / total:.0%})")
-            print(f"   CPU调用: {cpu_calls} ({cpu_calls / total:.0%})")
-            print(f"   云端调用: {cloud_calls} ({cloud_calls / total:.0%})")
-            avg_latency: float = total_latency / max(1, total)
-            print(f"   总耗时: {total_latency:.2f}s")
-            print(f"   平均延迟: {avg_latency:.2f}s")
+        gpu_calls: int = int(stats_copy["gpu_calls"])
+        cpu_calls: int = int(stats_copy["cpu_calls"])
+        cloud_calls: int = int(stats_copy["cloud_calls"])
+        total_latency: float = float(stats_copy["total_latency"])
+
+        print("\n📈 使用统计:")
+        print(f"   GPU调用: {gpu_calls} ({gpu_calls / total:.0%})")
+        print(f"   CPU调用: {cpu_calls} ({cpu_calls / total:.0%})")
+        print(f"   云端调用: {cloud_calls} ({cloud_calls / total:.0%})")
+        avg_latency: float = total_latency / max(1, total)
+        print(f"   总耗时: {total_latency:.2f}s")
+        print(f"   平均延迟: {avg_latency:.2f}s")
 
     def list_available_models(self, use_cache: bool = True) -> List[str]:
         """列出Ollama中可用的模型（带缓存）
@@ -869,31 +976,36 @@ class SmartRouter:
         Returns:
             List[str]: 可用模型名称列表
         """
+        # 先在锁内检查缓存，避免重复网络调用
         with self._models_cache_lock:
             if use_cache and self._cached_models is not None:
                 if time.time() - self._cached_models_time < MODEL_LIST_CACHE_TTL:
                     logger.debug("返回缓存的模型列表")
                     return list(self._cached_models)
 
-            try:
-                models = ollama.list()
-                result: List[str] = [
-                    str(m["model"]) for m in models.get("models", [])
-                ]
-                self._cached_models = result
-                self._cached_models_time = time.time()
-                logger.info("刷新模型列表，共 %d 个模型", len(result))
-                return result
-            except (ConnectionError, TimeoutError, ollama.ResponseError) as e:
-                print(f"获取模型列表失败 ({type(e).__name__})")
-                logger.warning("获取模型列表失败: %s", type(e).__name__)
-                logger.debug("模型列表原始错误: %s", e)
-                return []
-            except Exception as e:
-                print(f"获取模型列表失败 ({type(e).__name__})")
-                logger.error("获取模型列表失败: %s", type(e).__name__)
-                logger.debug("模型列表原始错误: %s", e)
-                return []
+        # 网络调用在锁外执行，避免阻塞其他线程
+        try:
+            models = ollama.list()
+            result: List[str] = [
+                str(m["model"]) for m in models.get("models", [])
+            ]
+        except (ConnectionError, TimeoutError, ollama.ResponseError) as e:
+            print(f"获取模型列表失败 ({type(e).__name__})")
+            logger.warning("获取模型列表失败: %s", type(e).__name__)
+            logger.debug("模型列表原始错误: %s", self._sanitize_exception(e))
+            return []
+        except Exception as e:
+            print(f"获取模型列表失败 ({type(e).__name__})")
+            logger.error("获取模型列表失败: %s", type(e).__name__)
+            logger.debug("模型列表原始错误: %s", self._sanitize_exception(e))
+            return []
+
+        # 仅在锁内更新缓存引用
+        with self._models_cache_lock:
+            self._cached_models = result
+            self._cached_models_time = time.time()
+        logger.info("刷新模型列表，共 %d 个模型", len(result))
+        return result
 
     def reset_stats(self) -> None:
         """重置统计信息"""

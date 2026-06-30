@@ -52,36 +52,39 @@ def main():
             print("   请检查 Ollama 是否已安装并运行")
             sys.exit(1)
         
-        print("=" * 50)
-        print("混合推理示例")
-        print("=" * 50)
-        
-        tasks = [
-            ("simple", "翻译: Hello World"),
-            ("medium", "分析这段Python代码的时间复杂度: def foo(n): return n*n"),
-            ("complex", "设计一个支持百万并发的分布式系统架构"),
-        ]
-        
-        for complexity, prompt in tasks:
-            try:
-                print(f"\n任务: {prompt[:50]}...")
-                print(f"复杂度: {complexity}")
-                
-                result = router.route(prompt, complexity=complexity)
-                print(f"路由到: {result.source}")
-                print(f"耗时: {result.latency:.2f}s")
-                print(f"回复: {result.content[:150]}...")
-                print("-" * 50)
-            except Exception as e:
-                print(f"   ⚠️  任务失败: {type(e).__name__}: {e}")
-                print("-" * 50)
-        
-        # 查看统计
         try:
-            print("\n统计信息:")
-            router.print_stats()
-        except Exception as e:
-            print(f"   ⚠️  打印统计失败: {type(e).__name__}: {e}")
+            print("=" * 50)
+            print("混合推理示例")
+            print("=" * 50)
+            
+            tasks = [
+                ("simple", "翻译: Hello World"),
+                ("medium", "分析这段Python代码的时间复杂度: def foo(n): return n*n"),
+                ("complex", "设计一个支持百万并发的分布式系统架构"),
+            ]
+            
+            for complexity, prompt in tasks:
+                try:
+                    print(f"\n任务: {prompt[:50]}...")
+                    print(f"复杂度: {complexity}")
+                    
+                    result = router.route(prompt, complexity=complexity)
+                    print(f"路由到: {result.source}")
+                    print(f"耗时: {result.latency:.2f}s")
+                    print(f"回复: {result.content[:150]}...")
+                    print("-" * 50)
+                except Exception as e:
+                    print(f"   ⚠️  任务失败: {type(e).__name__}: {e}")
+                    print("-" * 50)
+            
+            # 查看统计
+            try:
+                print("\n统计信息:")
+                router.print_stats()
+            except Exception as e:
+                print(f"   ⚠️  打印统计失败: {type(e).__name__}: {e}")
+        finally:
+            router.close()
     
     except ValueError as e:
         print(f"❌ 配置错误: {e}")

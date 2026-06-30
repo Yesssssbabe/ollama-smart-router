@@ -3,6 +3,7 @@ import pytest
 from unittest.mock import Mock, patch
 import threading
 import time
+import concurrent.futures
 import ollama
 
 from src.router import (
@@ -672,3 +673,116 @@ class TestRouterConfig:
         c1 = RouterConfig()
         c2 = RouterConfig(small_model="different")
         assert c1 != c2
+
+
+class TestRouterConfigSecurity:
+    """配置安全相关测试"""
+
+    def test_repr_redacts_api_key(self):
+        """RouterConfig.__repr__ 不应泄露 API 密钥"""
+        config = RouterConfig(cloud_api_key="sk-abcdef123456")
+        repr_str = repr(config)
+        assert "sk-abcdef123456" not in repr_str
+        assert "***REDACTED***" in repr_str
+
+    def test_nan_infinity_rejected(self):
+        """NaN / Infinity 配置值被拒绝"""
+        import math
+        with pytest.raises(ValueError, match="NaN"):
+            RouterConfig(gpu_vram_threshold=float("nan"))
+        with pytest.raises(ValueError, match="Infinity"):
+            RouterConfig(local_timeout=float("inf"))
+
+    def test_invalid_model_name_rejected(self):
+        """非法模型名在 __post_init__ 被拒绝"""
+        with pytest.raises(ValueError, match="格式不合法"):
+            RouterConfig(small_model="../evil")
+
+    def test_cloud_base_url_must_be_http_or_https(self):
+        """cloud_base_url 必须带协议头"""
+        with pytest.raises(ValueError, match="http"):
+            RouterConfig(cloud_base_url="ftp://example.com")
+
+
+class TestSmartRouterSecurity:
+    """路由安全相关测试"""
+
+    def test_sanitize_exception_masks_api_key(self, router):
+        """异常消息脱敏会隐藏 sk- 密钥"""
+        exc = Exception("request failed with Authorization: Bearer sk-abc123XYZ")
+        sanitized = router._sanitize_exception(exc)
+        assert "sk-abc123XYZ" not in sanitized
+        assert "sk-***" in sanitized
+
+    def test_memory_error_not_fallback(self, router):
+        """MemoryError 不应被降级处理"""
+        with patch('ollama.chat', side_effect=MemoryError("out of memory")):
+            with pytest.raises(RuntimeError, match="内存不足"):
+                router._run_local_gpu("test")
+
+    def test_safe_extract_message_not_dict(self, router):
+        """message 非字典时抛出 TypeError"""
+        with pytest.raises(TypeError):
+            router._safe_extract_ollama_content({"message": "not a dict"})
+
+    def test_get_cloud_client_init_exception_returns_none(self, router, caplog):
+        """OpenAI 初始化异常时返回 None"""
+        router.config.cloud_api_key = "test-key"
+        with patch('openai.OpenAI', side_effect=RuntimeError("init failed")):
+            client = router._get_cloud_client()
+        assert client is None
+
+    def test_get_cloud_client_thread_safe_singleton(self, router):
+        """双重检查锁保证只创建一个云端客户端"""
+        router.config.cloud_api_key = "test-key"
+        clients = []
+        barrier = threading.Barrier(10)
+
+        def worker():
+            barrier.wait()
+            clients.append(router._get_cloud_client())
+
+        threads = [threading.Thread(target=worker) for _ in range(10)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert all(c is clients[0] for c in clients)
+
+
+class TestOllamaTimeout:
+    """ollama 超时包装测试"""
+
+    def test_timeout_success(self, router, mock_ollama_response):
+        with patch('ollama.chat', return_value=mock_ollama_response) as mock_chat:
+            result = router._ollama_chat_with_timeout(
+                model="gemma3:4b",
+                messages=[{"role": "user", "content": "hi"}],
+                options={}
+            )
+        assert result == mock_ollama_response
+        mock_chat.assert_called_once()
+
+    def test_timeout_expired_rebuilds_executor(self, router):
+        """超时后应重建线程池，避免 worker 耗尽"""
+        router.config.local_timeout = 0.1
+        old_executor = router._executor
+        with patch('ollama.chat', side_effect=lambda **kwargs: __import__("time").sleep(10)):
+            with pytest.raises(concurrent.futures.TimeoutError):
+                router._ollama_chat_with_timeout(
+                    model="gemma3:4b",
+                    messages=[{"role": "user", "content": "hi"}],
+                    options={}
+                )
+        assert router._executor is not old_executor
+
+    def test_timeout_propagates_exception(self, router):
+        err = ollama.ResponseError("model not found")
+        with patch('ollama.chat', side_effect=err):
+            with pytest.raises(ollama.ResponseError):
+                router._ollama_chat_with_timeout(
+                    model="gemma3:4b",
+                    messages=[{"role": "user", "content": "hi"}],
+                    options={}
+                )

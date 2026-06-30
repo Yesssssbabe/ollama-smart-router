@@ -17,6 +17,14 @@ import os
 import logging
 from pathlib import Path
 
+# Windows CMD/PowerShell 默认编码非 UTF-8，先包装 stdout 避免 emoji/中文崩溃
+if sys.platform == "win32" and sys.stdout is not None and hasattr(sys.stdout, "buffer"):
+    try:
+        import io
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 # 初始化日志（可选，无配置文件时回退到默认）
 logging.basicConfig(
     level=logging.INFO,
@@ -183,9 +191,20 @@ def check_gpu():
     
     # 检查其他 GPU (macOS Metal 等)
     if sys.platform == "darwin":
-        print_status("GPU 加速", True, "Metal (macOS)")
-        return True
-    
+        try:
+            result = subprocess.run(
+                ["system_profiler", "SPDisplaysDataType"],
+                capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0 and "Metal" in result.stdout:
+                print_status("GPU 加速", True, "Metal (macOS)")
+                return True
+            else:
+                print_status("GPU 加速", False, "未检测到 Metal")
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            print_status("GPU 加速", False, "无法检测 Metal")
+        return False
+
     print_status("独立 GPU", False, "未检测到")
     print("     💡 没有 GPU 也能运行，会使用 CPU 推理")
     return False

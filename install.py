@@ -22,6 +22,14 @@ import sys
 import os
 from pathlib import Path
 
+# Windows CMD/PowerShell 默认编码非 UTF-8，先包装 stdout 避免 emoji/中文崩溃
+if sys.platform == "win32" and sys.stdout is not None and hasattr(sys.stdout, "buffer"):
+    try:
+        import io
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 
 # 检测是否处于非交互环境
 IS_CI = os.environ.get("CI", "").lower() in ("true", "1", "yes")
@@ -35,7 +43,8 @@ def run_command(cmd, description, retries=1):
     
     # 强制使用列表形式，如果是字符串则使用 shlex.split 安全分割
     if isinstance(cmd, str):
-        cmd_parts = shlex.split(cmd)
+        # Windows 路径包含反斜杠，使用 posix=False 更友好
+        cmd_parts = shlex.split(cmd, posix=(sys.platform != "win32"))
     else:
         cmd_parts = list(cmd)
     
@@ -187,7 +196,7 @@ python -m src -i
         script_name = "start.bat"
     else:
         script_content = '''#!/bin/bash
-cd "$(dirname "$(readlink -f "$0")")"
+cd "$(dirname "$0")"
 python3 -m src -i
 '''
         script_name = "start.sh"

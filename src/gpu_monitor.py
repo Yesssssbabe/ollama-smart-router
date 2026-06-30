@@ -40,57 +40,62 @@ class GPUMonitor:
         """检查nvidia-smi是否可用"""
         return shutil.which("nvidia-smi") is not None
 
+    def _query_gpu_memory(self, gpu_index: int = 0) -> Optional[GPUMemoryInfo]:
+        """在锁外执行 nvidia-smi 查询，避免阻塞并发线程"""
+        if not self.has_nvidia_smi:
+            return None
+
+        try:
+            result = subprocess.run(
+                ['nvidia-smi', '--query-gpu=memory.total,memory.used,memory.free,utilization.gpu',
+                 '--format=csv,noheader,nounits'],
+                capture_output=True, text=True, check=True,
+                timeout=5
+            )
+
+            lines = [line.strip() for line in result.stdout.strip().split('\n') if line.strip()]
+            if not lines:
+                return None
+
+            if gpu_index >= len(lines):
+                return None
+
+            values = [v.strip() for v in lines[gpu_index].split(',')]
+            if len(values) >= 4:
+                return GPUMemoryInfo(
+                    total_gb=float(values[0]) / 1024,
+                    used_gb=float(values[1]) / 1024,
+                    free_gb=float(values[2]) / 1024,
+                    utilization_percent=float(values[3])
+                )
+        except subprocess.TimeoutExpired:
+            pass
+        except subprocess.CalledProcessError:
+            pass
+        except ValueError:
+            pass
+        except Exception as e:
+            print(f"[警告] 获取GPU信息失败: {e}")
+
+        return None
+
     def get_gpu_memory(self, gpu_index: int = 0) -> Optional[GPUMemoryInfo]:
         """
         获取GPU显存信息
         适用于RTX 5060 8GB及同类显卡
         """
-        if not self.has_nvidia_smi:
-            return None
-
+        # 在锁内只读取缓存，subprocess 在锁外执行
         with self._lock:
             now = time.monotonic()
             if self._cache and (now - self._cache_time) < self._cache_ttl:
                 return self._cache
 
-            try:
-                # 获取显存信息
-                result = subprocess.run(
-                    ['nvidia-smi', '--query-gpu=memory.total,memory.used,memory.free,utilization.gpu',
-                     '--format=csv,noheader,nounits'],
-                    capture_output=True, text=True, check=True,
-                    timeout=5
-                )
-
-                lines = [line.strip() for line in result.stdout.strip().split('\n') if line.strip()]
-                if not lines:
-                    return None
-                
-                # 取指定GPU的数据
-                if gpu_index >= len(lines):
-                    return None
-                
-                values = [v.strip() for v in lines[gpu_index].split(',')]
-                if len(values) >= 4:
-                    info = GPUMemoryInfo(
-                        total_gb=float(values[0]) / 1024,
-                        used_gb=float(values[1]) / 1024,
-                        free_gb=float(values[2]) / 1024,
-                        utilization_percent=float(values[3])
-                    )
-                    self._cache = info
-                    self._cache_time = now
-                    return info
-            except subprocess.TimeoutExpired:
-                pass
-            except subprocess.CalledProcessError:
-                pass
-            except ValueError:
-                pass
-            except Exception as e:
-                print(f"[警告] 获取GPU信息失败: {e}")
-
-            return None
+        info = self._query_gpu_memory(gpu_index)
+        if info is not None:
+            with self._lock:
+                self._cache = info
+                self._cache_time = time.monotonic()
+        return info
 
     def get_free_vram_gb(self, gpu_index: int = 0) -> Optional[float]:
         """获取空闲显存（GB），失败时返回 None"""

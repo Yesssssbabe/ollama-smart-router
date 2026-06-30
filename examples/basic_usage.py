@@ -34,52 +34,54 @@ def main():
         print("=" * 50)
         
         router = SmartRouter()
-        
-        # 简单任务 - 应该路由到GPU小模型
         try:
-            result = router.route("你好，请介绍一下自己")
-            print(f"\n回复 ({result.source}):\n{result.content[:200]}...")
-        except Exception as e:
-            print(f"   ⚠️  路由失败: {type(e).__name__}: {e}")
-        
-        # 代码任务 - 应该路由到CPU中模型
-        try:
-            result = router.route("写个Python快速排序算法")
-            print(f"\n回复 ({result.source}):\n{result.content[:200]}...")
-        except Exception as e:
-            print(f"   ⚠️  路由失败: {type(e).__name__}: {e}")
-        
-        # 2. 手动指定复杂度
-        print("\n" + "=" * 50)
-        print("示例2: 手动指定复杂度")
-        print("=" * 50)
-        
-        try:
-            result = router.route("解释什么是机器学习", complexity="simple")
-            print(f"强制简单模式 ({result.source}): {result.content[:100]}...")
-        except Exception as e:
-            print(f"   ⚠️  路由失败: {type(e).__name__}: {e}")
-        
-        # 3. 强制使用特定策略
-        print("\n" + "=" * 50)
-        print("示例3: 强制策略")
-        print("=" * 50)
-        
-        # 强制CPU
-        try:
-            result = router.route("1+1等于几？", strategy=RoutingStrategy.LOCAL_CPU)
-            print(f"强制CPU ({result.source}): {result.content[:100]}...")
-        except Exception as e:
-            print(f"   ⚠️  路由失败: {type(e).__name__}: {e}")
-        
-        # 4. 查看统计
-        print("\n" + "=" * 50)
-        print("使用统计")
-        print("=" * 50)
-        try:
-            router.print_stats()
-        except Exception as e:
-            print(f"   ⚠️  打印统计失败: {type(e).__name__}: {e}")
+            # 简单任务 - 应该路由到GPU小模型
+            try:
+                result = router.route("你好，请介绍一下自己")
+                print(f"\n回复 ({result.source}):\n{result.content[:200]}...")
+            except Exception as e:
+                print(f"   ⚠️  路由失败: {type(e).__name__}: {e}")
+            
+            # 代码任务 - 应该路由到CPU中模型
+            try:
+                result = router.route("写个Python快速排序算法")
+                print(f"\n回复 ({result.source}):\n{result.content[:200]}...")
+            except Exception as e:
+                print(f"   ⚠️  路由失败: {type(e).__name__}: {e}")
+            
+            # 2. 手动指定复杂度
+            print("\n" + "=" * 50)
+            print("示例2: 手动指定复杂度")
+            print("=" * 50)
+            
+            try:
+                result = router.route("解释什么是机器学习", complexity="simple")
+                print(f"强制简单模式 ({result.source}): {result.content[:100]}...")
+            except Exception as e:
+                print(f"   ⚠️  路由失败: {type(e).__name__}: {e}")
+            
+            # 3. 强制使用特定策略
+            print("\n" + "=" * 50)
+            print("示例3: 强制策略")
+            print("=" * 50)
+            
+            # 强制CPU
+            try:
+                result = router.route("1+1等于几？", strategy=RoutingStrategy.LOCAL_CPU)
+                print(f"强制CPU ({result.source}): {result.content[:100]}...")
+            except Exception as e:
+                print(f"   ⚠️  路由失败: {type(e).__name__}: {e}")
+            
+            # 4. 查看统计
+            print("\n" + "=" * 50)
+            print("使用统计")
+            print("=" * 50)
+            try:
+                router.print_stats()
+            except Exception as e:
+                print(f"   ⚠️  打印统计失败: {type(e).__name__}: {e}")
+        finally:
+            router.close()
     
     except KeyboardInterrupt:
         print("\n\n  ⚠️  用户中断")

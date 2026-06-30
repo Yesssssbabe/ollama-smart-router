@@ -70,7 +70,7 @@ models:
                     mock_yaml.safe_load.return_value = {
                         "models": {"small": {"name": "test:4b", "vram_gb": 2.0}}
                     }
-                    result = load_yaml_config("/tmp/config.yaml")
+                    result = load_yaml_config("config.yaml")
         
         assert result is not None
         assert result["models"]["small"]["name"] == "test:4b"
@@ -93,7 +93,7 @@ models:
             with patch('pathlib.Path.exists', return_value=True):
                 with patch('builtins.open', mock_open(read_data="invalid: yaml: [")):
                     with pytest.raises(RuntimeError, match="YAML"):
-                        load_yaml_config("/tmp/config.yaml")
+                        load_yaml_config("config.yaml")
 
     def test_load_permission_error(self):
         """权限错误处理"""
@@ -101,7 +101,7 @@ models:
             with patch('pathlib.Path.exists', return_value=True):
                 with patch('builtins.open', side_effect=PermissionError("Access denied")):
                     with pytest.raises(RuntimeError, match="权限"):
-                        load_yaml_config("/tmp/config.yaml")
+                        load_yaml_config("config.yaml")
 
     def test_path_expansion(self):
         """路径扩展（~/.config/...）"""
@@ -115,7 +115,7 @@ models:
         """未安装pyyaml时"""
         with patch('src.config_loader.yaml', None):
             with pytest.raises(ImportError):
-                load_yaml_config("/tmp/config.yaml")
+                load_yaml_config("config.yaml")
 
     def test_multi_encoding_fallback(self):
         """多编码回退"""
@@ -123,7 +123,7 @@ models:
             with patch('builtins.open', mock_open(read_data="models:\n  small:\n    name: test")):
                 with patch('src.config_loader.yaml') as mock_yaml:
                     mock_yaml.safe_load.return_value = {"models": {"small": {"name": "test"}}}
-                    result = load_yaml_config("/tmp/config.yaml")
+                    result = load_yaml_config("config.yaml")
         assert result is not None
 
 
@@ -147,7 +147,7 @@ class TestConfigFromYaml:
         }
         
         with patch('src.config_loader.load_yaml_config', return_value=yaml_data):
-            config = config_from_yaml("/tmp/config.yaml")
+            config = config_from_yaml("config.yaml")
         
         assert config.small_model == "test-small:4b"
         assert config.small_model_vram == 2.5
@@ -162,19 +162,19 @@ class TestConfigFromYaml:
 
     def test_empty_yaml(self):
         with patch('src.config_loader.load_yaml_config', return_value=None):
-            config = config_from_yaml("/tmp/config.yaml")
+            config = config_from_yaml("config.yaml")
         
         assert config.small_model == "gemma3:4b"  # 默认值
 
     def test_api_key_from_yaml(self):
-        """YAML 中的 API key"""
+        """YAML 中明文 API key 应被拒绝，改用环境变量"""
         yaml_data = {"cloud": {"api_key": "yaml-key"}}
         
         with patch.dict(os.environ, {}, clear=True):
             with patch('src.config_loader.load_yaml_config', return_value=yaml_data):
-                config = config_from_yaml("/tmp/config.yaml")
+                config = config_from_yaml("config.yaml")
         
-        assert config.cloud_api_key == "yaml-key"
+        assert config.cloud_api_key is None
 
     def test_base_config_override(self):
         base = RouterConfig()
@@ -182,7 +182,7 @@ class TestConfigFromYaml:
         
         yaml_data = {"models": {"small": {"name": "yaml-model"}}}
         with patch('src.config_loader.load_yaml_config', return_value=yaml_data):
-            config = config_from_yaml("/tmp/config.yaml", base_config=base)
+            config = config_from_yaml("config.yaml", base_config=base)
         
         assert config.small_model == "yaml-model"
         assert config.medium_model == base.medium_model  # 未被覆盖
@@ -192,7 +192,7 @@ class TestConfigFromYaml:
         yaml_data = {"models": {"small": {"vram_gb": "invalid"}}}
         
         with patch('src.config_loader.load_yaml_config', return_value=yaml_data):
-            config = config_from_yaml("/tmp/config.yaml")
+            config = config_from_yaml("config.yaml")
         
         assert config.small_model_vram == 3.0  # 默认值
 
@@ -201,7 +201,7 @@ class TestConfigFromYaml:
         yaml_data = {"models": {"small": {"vram_gb": -5.0}}}
         
         with patch('src.config_loader.load_yaml_config', return_value=yaml_data):
-            config = config_from_yaml("/tmp/config.yaml")
+            config = config_from_yaml("config.yaml")
         
         assert config.small_model_vram == 3.0  # 默认值
 
@@ -211,7 +211,7 @@ class TestConfigFromYaml:
         
         with patch.dict(os.environ, {}, clear=True):
             with patch('src.config_loader.load_yaml_config', return_value=yaml_data):
-                config = config_from_yaml("/tmp/config.yaml")
+                config = config_from_yaml("config.yaml")
         
         assert config.cloud_api_key is None  # 默认None
 
@@ -220,7 +220,7 @@ class TestConfigFromYaml:
         yaml_data = {"performance": {"num_gpu": "50"}}
         
         with patch('src.config_loader.load_yaml_config', return_value=yaml_data):
-            config = config_from_yaml("/tmp/config.yaml")
+            config = config_from_yaml("config.yaml")
         
         assert config.use_gpu_offload is True
 
@@ -229,7 +229,7 @@ class TestConfigFromYaml:
         yaml_data = {"performance": {"num_gpu": 0}}
         
         with patch('src.config_loader.load_yaml_config', return_value=yaml_data):
-            config = config_from_yaml("/tmp/config.yaml")
+            config = config_from_yaml("config.yaml")
         
         assert config.use_gpu_offload is False
 
@@ -238,7 +238,7 @@ class TestConfigFromYaml:
         yaml_data = {"gpu_thresholds": {"safety_margin_gb": 2.0}}
         
         with patch('src.config_loader.load_yaml_config', return_value=yaml_data):
-            config = config_from_yaml("/tmp/config.yaml")
+            config = config_from_yaml("config.yaml")
         
         assert config.safety_margin_gb == 2.0
 
@@ -291,7 +291,7 @@ class TestMergeEnvVars:
         
         with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "env-key"}, clear=True):
             with patch('src.config_loader.load_yaml_config', return_value=yaml_data):
-                config = config_from_yaml("/tmp/config.yaml")
+                config = config_from_yaml("config.yaml")
                 # 手动调用 merge 模拟完整流程
                 config = merge_env_vars(config)
         
@@ -303,7 +303,7 @@ class TestMergeEnvVars:
         
         with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "env-key"}, clear=True):
             with patch('src.config_loader.load_yaml_config', return_value=yaml_data):
-                config = config_from_yaml("/tmp/config.yaml")
+                config = config_from_yaml("config.yaml")
                 config = merge_env_vars(config)
                 config.cloud_api_key = "cli-key"  # 模拟 CLI 覆盖
         
@@ -318,3 +318,47 @@ class TestMergeEnvVars:
             result = merge_env_vars(config)
         
         assert id(result) == config_id
+
+
+class TestConfigLoaderSecurity:
+    """配置加载安全相关测试"""
+
+    def test_safe_bool_variants(self):
+        from src.config_loader import _safe_bool
+        assert _safe_bool(True, False) is True
+        assert _safe_bool(False, True) is False
+        assert _safe_bool("true", False) is True
+        assert _safe_bool("false", True) is False
+        assert _safe_bool("1", False) is True
+        assert _safe_bool("0", True) is False
+        assert _safe_bool(None, True) is True
+
+    def test_safe_float_nan_inf_returns_default(self):
+        from src.config_loader import _safe_float
+        import math
+        assert _safe_float(float("nan"), 1.0, "test") == 1.0
+        assert _safe_float(float("inf"), 1.0, "test") == 1.0
+        assert _safe_float(float("-inf"), 1.0, "test") == 1.0
+
+    def test_config_from_yaml_rejects_plain_api_key(self):
+        yaml_data = {"cloud": {"api_key": "secret-key"}}
+        with patch.dict(os.environ, {}, clear=True):
+            with patch('src.config_loader.load_yaml_config', return_value=yaml_data):
+                config = config_from_yaml("config.yaml")
+        assert config.cloud_api_key is None
+
+    def test_config_from_yaml_rejects_unsafe_path(self):
+        with pytest.raises(PermissionError):
+            config_from_yaml("/etc/passwd")
+
+    def test_config_from_yaml_non_dict_model(self):
+        yaml_data = {"models": {"small": "gemma3:4b"}}
+        with patch('src.config_loader.load_yaml_config', return_value=yaml_data):
+            config = config_from_yaml("config.yaml")
+        assert config.small_model == "gemma3:4b"  # 默认值
+
+    def test_merge_env_vars_rejects_private_cloud_url(self):
+        config = RouterConfig()
+        with patch.dict(os.environ, {"CLOUD_BASE_URL": "https://192.168.1.1/v1"}, clear=True):
+            with pytest.raises(ValueError, match="私有"):
+                merge_env_vars(config)

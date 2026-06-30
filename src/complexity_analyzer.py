@@ -3,10 +3,11 @@
 使用启发式规则和轻量级模型自动评估任务复杂度
 """
 
+import functools
 import re
 from enum import Enum
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Tuple
 
 
 class TaskComplexity(Enum):
@@ -52,10 +53,51 @@ class ComplexityAnalyzer:
     ]
     
     def __init__(self):
-        self.simple_patterns = [re.compile(kw, re.I) for kw in self.SIMPLE_KEYWORDS]
-        self.medium_patterns = [re.compile(kw, re.I) for kw in self.MEDIUM_KEYWORDS]
-        self.complex_patterns = [re.compile(kw, re.I) for kw in self.COMPLEX_KEYWORDS]
-        
+        # 合并关键词为复合正则，减少扫描次数并预编译
+        self._simple_re = re.compile(
+            "|".join(re.escape(kw) for kw in self.SIMPLE_KEYWORDS), re.I
+        )
+        self._medium_re = re.compile(
+            "|".join(re.escape(kw) for kw in self.MEDIUM_KEYWORDS), re.I
+        )
+        self._complex_re = re.compile(
+            "|".join(re.escape(kw) for kw in self.COMPLEX_KEYWORDS), re.I
+        )
+
+    @staticmethod
+    @functools.lru_cache(maxsize=512)
+    def _cached_analyze(
+        prompt: str,
+        simple_score: int,
+        medium_score: int,
+        complex_score: int,
+        length: int,
+        code_blocks: int,
+        inline_code: int,
+        reasoning_indicators: int,
+        chinese_chars: int,
+        english_words: int,
+    ) -> Tuple[str, float, int, bool, bool]:
+        """缓存分析结果的核心计算（纯函数，避免重复正则扫描）"""
+        requires_code = code_blocks > 0 or medium_score > 0
+        requires_reasoning = reasoning_indicators >= 2 or complex_score > 0
+        estimated_tokens = int(chinese_chars * 1.5 + english_words * 1.3 + length * 0.1)
+
+        if complex_score > 0 or length > 1000 or code_blocks >= 2:
+            complexity = TaskComplexity.COMPLEX.value
+            confidence = min(0.9, 0.5 + complex_score * 0.1)
+        elif medium_score > 0 or length > 300 or code_blocks == 1 or reasoning_indicators >= 2:
+            complexity = TaskComplexity.MEDIUM.value
+            confidence = min(0.85, 0.5 + medium_score * 0.1)
+        elif simple_score > 0 and length < 200:
+            complexity = TaskComplexity.SIMPLE.value
+            confidence = min(0.9, 0.6 + simple_score * 0.1)
+        else:
+            complexity = TaskComplexity.MEDIUM.value
+            confidence = 0.5
+
+        return complexity, confidence, estimated_tokens, requires_code, requires_reasoning
+
     def analyze(self, prompt: str) -> TaskAnalysis:
         """
         分析任务复杂度
@@ -90,45 +132,41 @@ class ComplexityAnalyzer:
         prompt_lower = prompt.lower()
         length = len(prompt)
         
-        # 计算关键词得分
-        simple_score = sum(1 for p in self.simple_patterns if p.search(prompt))
-        medium_score = sum(1 for p in self.medium_patterns if p.search(prompt))
-        complex_score = sum(1 for p in self.complex_patterns if p.search(prompt))
-        
+        # 计算关键词得分（使用复合正则一次性扫描）
+        simple_score = len(self._simple_re.findall(prompt))
+        medium_score = len(self._medium_re.findall(prompt))
+        complex_score = len(self._complex_re.findall(prompt))
+
         # 检测代码相关内容
         code_blocks = len(re.findall(r'```[\s\S]*?```', prompt))
         inline_code = len(re.findall(r'`[^`]+`', prompt))
-        requires_code = code_blocks > 0 or medium_score > 0
-        
+
         # 检测推理需求
         reasoning_indicators = len(re.findall(
             r'为什么|怎么|如何|解释|分析|推导|证明|推理|逻辑|步骤',
             prompt
         ))
-        requires_reasoning = reasoning_indicators >= 2 or complex_score > 0
-        
+
         # 预估token数 (粗略估计: 1个中文字符≈1.5 tokens, 1个英文单词≈1.3 tokens)
         chinese_chars = len(re.findall(r'[\u4e00-\u9fff]', prompt))
         english_words = len(re.findall(r'[a-zA-Z]+', prompt))
-        estimated_tokens = int(chinese_chars * 1.5 + english_words * 1.3 + length * 0.1)
-        
-        # 综合判断复杂度
-        if complex_score > 0 or length > 1000 or code_blocks >= 2:
-            complexity = TaskComplexity.COMPLEX
-            confidence = min(0.9, 0.5 + complex_score * 0.1)
-        elif medium_score > 0 or length > 300 or code_blocks == 1 or reasoning_indicators >= 2:
-            complexity = TaskComplexity.MEDIUM
-            confidence = min(0.85, 0.5 + medium_score * 0.1)
-        elif simple_score > 0 and length < 200:
-            complexity = TaskComplexity.SIMPLE
-            confidence = min(0.9, 0.6 + simple_score * 0.1)
-        else:
-            # 默认中等复杂度
-            complexity = TaskComplexity.MEDIUM
-            confidence = 0.5
-            
+
+        # 使用缓存避免重复计算相同输入
+        complexity_value, confidence, estimated_tokens, requires_code, requires_reasoning = self._cached_analyze(
+            prompt,
+            simple_score,
+            medium_score,
+            complex_score,
+            length,
+        code_blocks,
+            inline_code,
+            reasoning_indicators,
+            chinese_chars,
+            english_words,
+        )
+
         return TaskAnalysis(
-            complexity=complexity,
+            complexity=TaskComplexity(complexity_value),
             confidence=confidence,
             estimated_tokens=estimated_tokens,
             requires_code=requires_code,

@@ -414,7 +414,7 @@ class TestInteractiveMode:
     def test_long_input_rejected(self, capsys):
         """超长输入被拒绝"""
         router = Mock()
-        long_input = "x" * 100001
+        long_input = "x" * 200001
         
         with patch('builtins.input', side_effect=[long_input, "/quit"]):
             interactive_mode(router)
