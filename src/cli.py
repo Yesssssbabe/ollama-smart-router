@@ -15,6 +15,7 @@
 import argparse
 import dataclasses
 import getpass
+import logging
 import os
 import sys
 from pathlib import Path
@@ -30,7 +31,23 @@ from .router import SmartRouter, RouterConfig, RoutingStrategy, VALID_MODEL
 from .gpu_monitor import GPUMonitor, CPUMonitor
 from .config_loader import config_from_yaml, merge_env_vars
 
+logger = logging.getLogger(__name__)
+
 MAX_PROMPT_LENGTH = 200000  # 交互模式最大输入长度（与路由限制对齐，约200KB）
+
+
+def _production_error_message(detail: str) -> str:
+    """H-13: 生产环境返回泛化错误消息，DEBUG 模式保留详细信息。
+
+    Args:
+        detail: 详细错误信息（仅在 DEBUG 模式展示）。
+
+    Returns:
+        str: 对外展示的错误消息。
+    """
+    if os.environ.get("DEBUG"):
+        return detail
+    return "请求处理失败，请稍后重试或联系管理员"
 
 
 def validate_config_path(path: str) -> str:
@@ -196,7 +213,9 @@ def interactive_mode(router: SmartRouter):
         # 系统退出异常应继续向上传播，不得吞没
         raise
     except Exception as e:
-        print(f"❌ 错误: {e}")
+        # H-13: 生产环境隐藏详细异常，仅记录日志
+        logger.exception("交互模式发生未预期错误")
+        print(f"❌ 错误: {_production_error_message(str(e))}")
     finally:
         router.close()
 
@@ -273,7 +292,7 @@ def load_config(args) -> RouterConfig:
     if args.model is not None and args.model.strip():
         model = args.model.strip()
         if not VALID_MODEL.match(model):
-            raise ValueError(f"模型名格式不合法: {model}")
+            raise ValueError(f"[ERR_INPUT_INVALID] 模型名格式不合法: {model}")
         # C-4/H-2: RouterConfig 为 frozen，使用 dataclasses.replace 更新
         config = dataclasses.replace(
             config, small_model=model, medium_model=model, large_model=model
@@ -348,13 +367,17 @@ def main() -> int:
             result = router.route(args.prompt, complexity=args.complexity, strategy=strategy)
             print(result.content)
         except Exception as e:
-            print_error(f"运行失败: {e}")
+            # H-13: 生产环境隐藏详细异常，DEBUG 模式保留完整信息用于排障
+            logger.exception("单次查询运行失败")
+            display_msg = _production_error_message(str(e))
+            print_error(f"运行失败: {display_msg}")
 
-            # 提供针对性建议
+            # 提供针对性建议（基于错误类型而非原始消息，避免泄露敏感信息）
+            error_type = type(e).__name__.lower()
             error_msg = str(e).lower()
             if "model" in error_msg and "not found" in error_msg:
                 print_tip("模型未找到，请下载模型: ollama pull gemma3:4b")
-            elif "connection" in error_msg:
+            elif "connection" in error_type or "connection" in error_msg:
                 print_ollama_error()
             elif "gpu" in error_msg or "cuda" in error_msg:
                 print_tip("GPU 错误，尝试使用 CPU: python -m src '问题' --strategy cpu")

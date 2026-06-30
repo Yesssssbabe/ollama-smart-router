@@ -8,7 +8,9 @@ Ollama Smart Router - 智能模型调度器
 """
 
 import logging
+import os
 import sys
+from logging.handlers import RotatingFileHandler
 
 # 初始化日志系统
 # 如果 stdout 编码不是 UTF-8，尝试重新配置（Windows 兼容性）
@@ -18,15 +20,48 @@ if sys.platform == "win32" and sys.stdout is not None and hasattr(sys.stdout, "r
     except (AttributeError, OSError):
         pass
 
-# H-12: 仅在根日志记录器尚未配置时初始化，避免污染用户已有的日志配置
-if not logging.root.handlers:
+
+def _setup_default_logging() -> None:
+    """H-12/H-28: 配置默认日志输出到控制台与文件。
+
+    文件日志默认写入 ~/.local/log/osr.log，单文件 10MB，保留 10 个备份，
+    权限 640。仅在根日志记录器尚未配置时执行，避免污染用户已有配置。
+    """
+    if logging.root.handlers:
+        return
+
+    handlers: list[logging.Handler] = [logging.StreamHandler(sys.stdout)]
+
+    try:
+        log_dir = os.path.expanduser("~/.local/log")
+        os.makedirs(log_dir, exist_ok=True)
+        log_path = os.path.join(log_dir, "osr.log")
+
+        file_handler = RotatingFileHandler(
+            log_path, maxBytes=10 * 1024 * 1024, backupCount=10, encoding="utf-8"
+        )
+        file_handler.setLevel(logging.INFO)
+        handlers.append(file_handler)
+
+        # 设置文件权限 640（Windows 上 os.chmod 行为不同，忽略异常）
+        try:
+            os.chmod(log_path, 0o640)
+        except (OSError, NotImplementedError):
+            pass
+    except (OSError, PermissionError):
+        # 无法创建日志目录时回退到仅控制台输出
+        pass
+
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S',
-        handlers=[logging.StreamHandler(sys.stdout)],
-        force=False  # 不强制覆盖已有配置，尊重用户预配置
+        handlers=handlers,
+        force=False,  # 不强制覆盖已有配置，尊重用户预配置
     )
+
+
+_setup_default_logging()
 
 # 获取模块日志记录器
 logger = logging.getLogger(__name__)

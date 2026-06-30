@@ -8,6 +8,8 @@ import openai as oa_module
 # 确保 src 在路径中
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
+import queue as _queue
+
 from src.router import SmartRouter, RouterConfig, RoutingStrategy, InferenceResult
 from src.gpu_monitor import GPUMonitor, CPUMonitor, GPUMemoryInfo
 from src.complexity_analyzer import ComplexityAnalyzer, TaskComplexity
@@ -16,6 +18,47 @@ from src.complexity_analyzer import ComplexityAnalyzer, TaskComplexity
 # 但 openai 只在 _get_cloud_client 中局部导入
 import src.router as router_mod
 router_mod.openai = oa_module
+
+
+@pytest.fixture(autouse=True)
+def mock_multiprocessing_process():
+    """自动 mock multiprocessing.Process，使现有 ollama.chat patch 在子进程模式下继续生效。
+
+    C-2 将 _ollama_chat_with_timeout 改为基于 multiprocessing.Process 的实现。
+    测试中原先对 ollama.chat 的 patch 无法跨进程生效，因此通过此 fixture 让 Process
+    在启动时直接在当前进程调用工作函数，从而复用所有已存在的 chat mock。
+    """
+    # router.py 在模块顶部执行了 `from multiprocessing import Process, Queue`，
+    # 因此必须 patch src.router 中的绑定名，才能真正替换路由代码里的 Process/Queue。
+    with patch('src.router.Process') as mock_process_class, \
+         patch('src.router.Queue') as mock_queue_class:
+
+        result_queue = _queue.Queue()
+        mock_queue_class.return_value = result_queue
+
+        def make_process(*args, **kwargs):
+            p = Mock()
+            p.is_alive.return_value = False
+
+            target = kwargs.get('target')
+            worker_args = kwargs.get('args', ())
+            if target is None and args:
+                target = args[0]
+            if not worker_args and len(args) > 1:
+                worker_args = args[1]
+
+            def fake_start():
+                # _ollama_worker 内部已捕获异常并写入队列，这里直接调用即可
+                try:
+                    target(*worker_args)
+                except Exception:
+                    pass
+
+            p.start.side_effect = fake_start
+            return p
+
+        mock_process_class.side_effect = make_process
+        yield
 
 
 @pytest.fixture

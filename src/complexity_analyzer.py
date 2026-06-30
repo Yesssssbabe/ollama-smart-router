@@ -112,9 +112,9 @@ class ComplexityAnalyzer:
         """
         # 输入验证
         if prompt is None:
-            raise ValueError("prompt 不能为 None")
+            raise ValueError("[ERR_INPUT_INVALID] prompt 不能为 None")
         if not isinstance(prompt, str):
-            raise TypeError(f"prompt 必须是字符串类型，实际为 {type(prompt).__name__}")
+            raise TypeError(f"[ERR_INPUT_INVALID] prompt 必须是字符串类型，实际为 {type(prompt).__name__}")
         
         prompt = prompt.strip()
         if len(prompt) == 0:

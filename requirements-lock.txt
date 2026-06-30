@@ -1,0 +1,17 @@
+# Ollama Smart Router - 依赖锁定文件
+# 生成说明: 本文件记录 requirements.txt 中直接依赖的已解析版本。
+# 如需完整传递依赖锁定，建议使用 pip-tools 重新生成:
+#   pip install pip-tools
+#   pip-compile --generate-hashes requirements.txt -o requirements-lock.txt
+
+# 核心依赖
+ollama==0.6.2
+psutil==7.2.2
+pyyaml==6.0.3
+
+# 云端API支持 (可选)
+openai==2.44.0
+httpx==0.28.1
+
+# 跨平台标准配置目录
+platformdirs>=3.0.0

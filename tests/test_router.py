@@ -4,7 +4,6 @@ import pytest
 from unittest.mock import Mock, patch
 import threading
 import time
-import concurrent.futures
 import ollama
 
 from src.router import (
@@ -752,7 +751,7 @@ class TestSmartRouterSecurity:
 
 
 class TestOllamaTimeout:
-    """ollama 超时包装测试"""
+    """ollama 超时包装测试（C-2: 基于 multiprocessing.Process）"""
 
     def test_timeout_success(self, router, mock_ollama_response):
         with patch('ollama.chat', return_value=mock_ollama_response) as mock_chat:
@@ -764,18 +763,27 @@ class TestOllamaTimeout:
         assert result == mock_ollama_response
         mock_chat.assert_called_once()
 
-    def test_timeout_expired_rebuilds_executor(self, router):
-        """超时后应重建线程池，避免 worker 耗尽"""
+    def test_timeout_expired_terminates_process(self, router):
+        """超时后应强制终止子进程，避免线程泄漏"""
         router.config = dataclasses.replace(router.config, local_timeout=0.1)
-        old_executor = router._executor
-        with patch('ollama.chat', side_effect=lambda **kwargs: __import__("time").sleep(10)):
-            with pytest.raises(concurrent.futures.TimeoutError):
-                router._ollama_chat_with_timeout(
-                    model="gemma3:4b",
-                    messages=[{"role": "user", "content": "hi"}],
-                    options={}
-                )
-        assert router._executor is not old_executor
+
+        mock_process = Mock()
+        mock_process.is_alive.return_value = True
+        mock_queue = Mock()
+        mock_queue.empty.return_value = True
+
+        with patch('src.router.Process', return_value=mock_process) as mock_process_class:
+            with patch('src.router.Queue', return_value=mock_queue):
+                with pytest.raises(TimeoutError):
+                    router._ollama_chat_with_timeout(
+                        model="gemma3:4b",
+                        messages=[{"role": "user", "content": "hi"}],
+                        options={}
+                    )
+
+        mock_process_class.assert_called_once()
+        mock_process.start.assert_called_once()
+        mock_process.terminate.assert_called_once()
 
     def test_timeout_propagates_exception(self, router):
         err = ollama.ResponseError("model not found")

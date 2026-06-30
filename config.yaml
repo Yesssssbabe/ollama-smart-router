@@ -6,19 +6,16 @@ models:
   small:
     name: "gemma3:4b"
     vram_gb: 3.0
-    description: "轻量级模型，适合翻译、简单问答"
-  
+
   # 中模型 - 用于中等任务 (CPU)
   medium:
-    name: "qwen2.5:7b"  
+    name: "qwen2.5:7b"
     vram_gb: 6.0
-    description: "平衡模型，适合代码、分析"
-  
+
   # 大模型 - 用于复杂任务 (CPU Fallback)
   large:
     name: "llama3.2:8b"
     vram_gb: 7.0
-    description: "强力模型，复杂推理"
 
 # GPU阈值配置
 gpu_thresholds:
@@ -26,7 +23,7 @@ gpu_thresholds:
   min_free_vram_gb: 4.0
   # 安全余量 (GB)，路由时会加上此余量判断显存是否足够
   safety_margin_gb: 1.0
-  
+
 # 云端API配置 (可选)
 cloud:
   # API密钥 - 建议通过环境变量设置: export DEEPSEEK_API_KEY='your-key'
@@ -34,24 +31,14 @@ cloud:
   api_key: null
   base_url: "https://api.deepseek.com"
   model: "deepseek-chat"
-  # 备用配置 (暂未使用)
-  alternatives:
-    - name: "硅基流动"
-      base_url: "https://api.siliconflow.cn/v1"
-      model: "deepseek-ai/DeepSeek-V3"
-    - name: "OpenRouter"
-      base_url: "https://openrouter.ai/api/v1"
-      model: "anthropic/claude-3.5-sonnet"
 
 # 性能优化
 performance:
   # 上下文长度
   num_ctx: 4096
-  # CPU线程数 (0=自动使用全部线程)
-  num_thread: 0
   # GPU层数 (99=全部)
   num_gpu: 99
-  
+
 # 路由策略
 routing:
   # 默认策略: auto, gpu, cpu, cloud
@@ -60,9 +47,12 @@ routing:
   prefer_cloud_for_complex: true
   # 失败时是否自动降级
   auto_fallback: true
+  # 全局降级链超时（秒），默认 180s；设为 0 表示不启用
+  chain_timeout: 180
+  # 全局最大并发请求数，超限时排队而非拒绝
+  max_concurrent_requests: 10
 
 # 日志
 logging:
   level: "INFO"  # DEBUG, INFO, WARNING, ERROR
-  show_routing_decision: true
   show_latency: true

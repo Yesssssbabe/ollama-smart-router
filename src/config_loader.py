@@ -148,12 +148,13 @@ def load_yaml_config(path: Optional[str] = None) -> Optional[dict[str, Any]]:
         except FileNotFoundError:
             continue
         except OSError as e:
-            raise RuntimeError(f"无法访问配置文件: {candidate}") from e
+            raise RuntimeError(f"[ERR_CONFIG_INVALID] 无法访问配置文件: {candidate}") from e
 
         # H-7: 限制文件大小，防止恶意大 YAML 导致内存耗尽
         if stat.st_size > MAX_CONFIG_FILE_SIZE:
             raise RuntimeError(
-                f"配置文件过大 ({stat.st_size} 字节)，上限 {MAX_CONFIG_FILE_SIZE} 字节: {candidate}"
+                f"[ERR_CONFIG_INVALID] 配置文件过大 ({stat.st_size} 字节)，"
+                f"上限 {MAX_CONFIG_FILE_SIZE} 字节: {candidate}"
             )
 
         # 尝试多种编码读取
@@ -167,12 +168,12 @@ def load_yaml_config(path: Optional[str] = None) -> Optional[dict[str, Any]]:
                 last_error = e
                 continue
             except PermissionError as e:
-                raise RuntimeError(f"配置文件存在但无读取权限: {candidate}") from e
+                raise RuntimeError(f"[ERR_CONFIG_INVALID] 配置文件存在但无读取权限: {candidate}") from e
             except yaml.YAMLError as e:
-                raise RuntimeError(f"YAML 解析失败: {candidate} - {e}") from e
+                raise RuntimeError(f"[ERR_CONFIG_INVALID] YAML 解析失败: {candidate} - {e}") from e
         # 如果所有编码都失败
         if last_error:
-            raise RuntimeError(f"无法以支持的编码读取配置文件: {candidate}") from last_error
+            raise RuntimeError(f"[ERR_CONFIG_INVALID] 无法以支持的编码读取配置文件: {candidate}") from last_error
 
     return None
 
@@ -196,19 +197,19 @@ def _validate_cloud_base_url(url: str) -> None:
     from urllib.parse import urlparse
     # H-19: 拒绝换行符与控制字符，防止 HTTP 头/日志注入
     if any(ord(ch) < 32 for ch in url):
-        raise ValueError(f"cloud_base_url 包含非法控制字符: {url!r}")
+        raise ValueError(f"[ERR_CONFIG_INVALID] cloud_base_url 包含非法控制字符: {url!r}")
     parsed = urlparse(url)
     if parsed.scheme != "https":
-        raise ValueError(f"cloud_base_url 必须使用 https 协议: {url}")
+        raise ValueError(f"[ERR_CONFIG_INVALID] cloud_base_url 必须使用 https 协议: {url}")
     if not parsed.hostname:
-        raise ValueError(f"cloud_base_url 缺少主机名: {url}")
+        raise ValueError(f"[ERR_CONFIG_INVALID] cloud_base_url 缺少主机名: {url}")
     try:
         addr = ipaddress.ip_address(parsed.hostname)
     except ValueError:
         # 主机名不是 IP，允许
         return
     if addr.is_private or addr.is_loopback or addr.is_reserved:
-        raise ValueError(f"cloud_base_url 禁止指向私有/回环地址: {url}")
+        raise ValueError(f"[ERR_CONFIG_INVALID] cloud_base_url 禁止指向私有/回环地址: {url}")
 
 
 def config_from_yaml(path: Optional[str] = None, base_config: Optional[RouterConfig] = None) -> RouterConfig:
@@ -219,7 +220,7 @@ def config_from_yaml(path: Optional[str] = None, base_config: Optional[RouterCon
     """
     # 公共 API 入口也进行路径安全校验
     if path is not None and not _is_safe_path(path):
-        raise PermissionError(f"配置文件路径不在允许范围内: {path}")
+        raise PermissionError(f"[ERR_CONFIG_INVALID] 配置文件路径不在允许范围内: {path}")
 
     config = base_config or RouterConfig()
 
@@ -304,6 +305,29 @@ def config_from_yaml(path: Optional[str] = None, base_config: Optional[RouterCon
     )
     overrides["auto_fallback"] = _safe_bool(
         routing.get("auto_fallback"), config.auto_fallback
+    )
+
+    # C-3/C-6: 从 YAML 读取全局降级链超时与并发限制
+    chain_timeout_raw = routing.get("chain_timeout")
+    if chain_timeout_raw is not None:
+        try:
+            chain_timeout_val = int(chain_timeout_raw)
+            if chain_timeout_val >= 0:
+                overrides["chain_timeout"] = chain_timeout_val
+            else:
+                logger.warning(
+                    "配置项 routing.chain_timeout 值 %r 为负数，使用默认值 %r",
+                    chain_timeout_raw, config.chain_timeout
+                )
+        except (TypeError, ValueError):
+            logger.warning(
+                "配置项 routing.chain_timeout 值 %r 无法转换为 int，使用默认值 %r",
+                chain_timeout_raw, config.chain_timeout
+            )
+    overrides["max_concurrent_requests"] = _safe_int(
+        routing.get("max_concurrent_requests"),
+        config.max_concurrent_requests,
+        "routing.max_concurrent_requests",
     )
 
     if not overrides:
