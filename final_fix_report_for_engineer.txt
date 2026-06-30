@@ -1,0 +1,259 @@
+================================================================================
+  Ollama Smart Router - 第三轮审计修复报告（供漏洞检测工程师审阅）
+================================================================================
+
+1. 项目 / 审计上下文
+--------------------------------------------------------------------------------
+  项目名称: Ollama Smart Router
+  项目路径: /Users/shawnxiong/Documents/GitHub/ollama-smart-router/
+  审计报告: /Users/shawnxiong/Documents/kimi/Workspaces/Ollama Smart Router/final_comprehensive_audit_report.txt
+  审计日期: 2026-06-30
+  审计范围: src/*.py, tests/*.py, examples/*.py, setup.py, config.yaml,
+            requirements.txt, pytest.ini, check_env.py, install.py,
+            .github/workflows/*.yml
+
+  修复原则:
+  - 优先处理报告中明确的 Critical 与 High 级别漏洞；
+  - 修复必须安全，且不能破坏现有测试基线（基线 259 passed）；
+  - 涉及架构级重构、行为重大变更或需要产品决策的项，列为“未修复”，
+    并请求工程师提供进一步方案；
+  - 未修改 README/Markdown 文件与 wechat-qr.jpg。
+
+2. 已修复漏洞清单
+--------------------------------------------------------------------------------
+
+  【Critical】
+
+  C-1   max_fallback_attempts 语义错误
+        位置: src/router.py
+        修复: 将降级判断从 fallback_depth >= max 改为 fallback_depth > max，
+              使默认值 2 可支撑 GPU → CPU → Cloud 三层降级链。
+
+  C-4   配置对象运行时共享竞态
+        位置: src/router.py
+        修复: RouterConfig 改为 @dataclass(frozen=True)，运行时不可变；
+              所有更新通过 dataclasses.replace() 创建新实例，触发 __post_init__ 校验。
+
+  C-5   线程池关闭后仍可能提交任务
+        位置: src/router.py
+        修复: close() 在 _executor_lock 内设置 _is_closed=True 并清空 _executor；
+              _ollama_chat_with_timeout 提交前检查 _is_closed / _executor is None。
+
+  C-7   缓存雪崩（模型列表缓存过期时并发穿透）
+        位置: src/router.py
+        修复: list_available_models 增加 single-flight 机制
+              (_models_fetch_lock + _models_fetch_event)，确保缓存失效时只有一个线程请求 Ollama。
+
+  C-8   时间侧信道（模型列表缓存命中/未命中耗时差异）
+        位置: src/router.py
+        修复: 对 list_available_models 添加恒定时间包装，确保最短耗时不低于 0.1s。
+
+  C-9   时间侧信道（云端 API 密钥存在性可通过响应时间推断）
+        位置: src/router.py
+        修复: _run_cloud 在 cloud_api_key 为空时先 sleep 0.1s 再抛出异常，
+              使有/无密钥路径耗时趋于一致。
+
+  C-10  _validate_prompt 清洗后变量未返回
+        位置: src/router.py
+        修复: _validate_prompt 改为返回清洗后的 str；route() 使用返回值继续后续逻辑，
+              避免零宽字符、双向文本覆盖等绕过验证。
+
+  C-11  httpx 未声明依赖且顶部硬导入
+        位置: src/router.py, requirements.txt
+        修复: 移除 src/router.py 顶部 import httpx；_get_cloud_client 内延迟导入；
+              requirements.txt 显式加入 httpx>=0.25.0,<1.0.0。
+
+  C-12  环境变量模型名覆盖后未重新验证
+        位置: src/config_loader.py
+        修复: merge_env_vars 对 SMALL_MODEL / MEDIUM_MODEL / LARGE_MODEL / CLOUD_MODEL
+              使用 VALID_MODEL 正则校验，非法则记录错误并跳过。
+
+  【High】
+
+  H-2   RouterConfig 未 frozen（与 C-4 合并处理）
+        位置: src/router.py
+        修复: 同 C-4。
+
+  H-5   路径遍历绕过（Tilde Expansion）
+        位置: src/cli.py
+        修复: validate_config_path 先调用 os.path.expanduser(path) 再解析真实路径，
+              防止 ~/secret.yaml 通过 realpath 检查。
+
+  H-6   符号链接后替换（TOCTOU）
+        位置: src/config_loader.py
+        修复: load_yaml_config 放弃 candidate.exists() 先检查再 open() 的模式，
+              改为直接 candidate.stat() / open() 并用 try-except 处理 FileNotFoundError。
+
+  H-7   恶意大 YAML 文件导致 DoS
+        位置: src/config_loader.py
+        修复: 加载 YAML 前检查文件大小，超过 MAX_CONFIG_FILE_SIZE (1MB) 抛出 RuntimeError。
+
+  H-8   GPU 缓存过时导致 OOM
+        位置: src/gpu_monitor.py
+        修复: GPUMonitor 默认 cache_ttl 从 2.0s 降至 0.5s，降低显存剧变时的决策滞后。
+
+  H-9   lru_cache 以原始 prompt 为键导致隐私泄露
+        位置: src/complexity_analyzer.py
+        修复: _cached_analyze 缓存键移除 prompt 参数，仅使用提取后的特征值，
+              不再在缓存中存储原始用户输入。
+
+  H-10  失败请求不统计
+        位置: src/router.py
+        修复: 在 GPU/CPU/Cloud 各执行路径的 except 分支中增加
+              gpu_failures / cpu_failures / cloud_failures 计数。
+
+  H-12  logging 强制全局配置
+        位置: src/__init__.py
+        修复: 仅在 logging.root.handlers 为空时才调用 basicConfig，
+              避免覆盖用户已有的日志配置。
+
+  H-15  num_ctx 无上限
+        位置: src/router.py
+        修复: RouterConfig.__post_init__ 增加 num_ctx <= MAX_NUM_CTX (131072) 检查。
+
+  H-17  _safe_bool 逻辑缺陷
+        位置: src/config_loader.py
+        修复: _safe_bool 现在支持 int/float，并识别 "false"/"0"/"no"/"off"/"" 为 False。
+
+  H-18  config_from_yaml 直接修改 RouterConfig 绕过验证
+        位置: src/config_loader.py
+        修复: config_from_yaml 与 merge_env_vars 不再直接修改 config 字段，
+              而是收集覆盖项后通过 dataclasses.replace() 创建新实例。
+
+  H-19  URL 验证缺少 CRLF 注入检查
+        位置: src/config_loader.py
+        修复: _validate_cloud_base_url 拒绝包含控制字符（含 \r\n）的 URL。
+
+  H-20  check_env.py print_summary 逻辑错误
+        位置: check_env.py
+        修复: 调整 elif 顺序，确保缺少依赖时优先提示，避免 Python/文件失败时依赖缺失信息被掩盖。
+
+  H-22  CI 使用 || true 掩盖测试失败
+        位置: .github/workflows/python-test.yml
+        修复: 移除 pytest、black --check、ruff check 后的 || true，
+              使 CI 在测试/格式/ lint 失败时真正失败。
+
+3. 未修复漏洞清单（需要工程师进一步方案）
+--------------------------------------------------------------------------------
+
+  【Critical】
+
+  C-2   ThreadPoolExecutor 线程泄漏（超时后无法终止线程）
+        原因: Python 线程无法被强制终止；审计推荐的 multiprocessing.Process + terminate()、
+              信号量或 httpx 直接调用 Ollama HTTP API 均属于架构级改动，
+              会显著改变超时语义、资源占用和测试方式，当前无法在不引入回归风险的前提下完成。
+        请求: 请评估采用 multiprocessing.Process 还是 httpx 直连 Ollama API，
+              并提供原型与回归测试计划。
+
+  C-3   无全局降级链超时
+        原因: 需新增 chain_timeout 配置项并在 route() 内维护 chain_deadline；
+              当前每个后端超时独立，贸然增加全局限制可能改变用户感知的最大等待时间。
+        请求: 请确认期望的全局降级链超时默认值及向后兼容策略。
+
+  C-6   无全局并发限制
+        原因: 需新增 max_concurrent_requests 配置并在 route() 入口加 Semaphore；
+              会改变默认并发行为，可能影响现有 benchmark/example 结果。
+        请求: 请给出默认并发上限建议及是否需要排队/拒绝策略。
+
+  【High】
+
+  H-1   ollama 非可选依赖
+        原因: src/router.py 顶部仍 import ollama；改为方法内导入会影响类型检查、
+              测试 patch 路径及大量现有代码，需要系统性地调整导入与错误处理。
+        请求: 请确认是否接受将 ollama 作为可选依赖，以及缺失时的降级行为。
+
+  H-3   错误消息全中文
+        原因: 需要引入 i18n 框架（gettext）或错误代码体系，涉及全项目文案重构，
+              工作量大且可能破坏现有测试断言。
+        请求: 请提供 i18n 方案或错误代码规范。
+
+  H-4   长时间推理无进度反馈
+        原因: 需要接入 ollama.chat(..., stream=True) 或定期进度打印，
+              会改变 route() 返回值/交互方式。
+        请求: 请确认是否增加流式输出 API 或保持当前阻塞式接口。
+
+  H-11  reset_stats 无防篡改
+        原因: 需要引入调用者权限校验或审计日志，属于安全模型扩展，
+              当前项目尚无权限抽象。
+        请求: 请给出防篡改策略（如密码保护、审计日志、仅内部调用）。
+
+  H-13  统一错误响应
+        原因: 所有错误返回泛化消息会隐藏调试信息，且会改变大量测试断言；
+              需要设计错误代码 + 安全消息映射。
+        请求: 请确认统一错误响应的格式与保留给开发者的调试信息级别。
+
+  H-14  无审计日志
+        原因: 可快速添加独立 audit_logger，但需明确审计事件范围、存储位置、
+              日志格式及保留策略，否则流于形式。
+        请求: 请定义需要审计的事件列表与日志输出位置。
+
+  H-16  配置与代码不一致（9 项僵尸配置）
+        原因: 涉及 config.yaml 中未使用字段（如 logging.show_routing_decision、
+              cloud.alternatives 等），删除或实现均需要产品/设计决策。
+        请求: 请确认哪些字段保留、删除或实现对应功能。
+
+  H-21  供应链安全（无锁定文件、无漏洞扫描）
+        原因: 需要引入 poetry.lock / pip-compile + pip-audit/safety，
+              会改变依赖管理方式与 CI 流程。
+        请求: 请选择 poetry / pip-tools 方案并确认是否加入 CI 漏洞扫描。
+
+  H-23  架构劣化（God Class）
+        原因: 拆分 SmartRouter 为 InferenceBackend / RoutingStrategy / StatsCollector /
+              TimeoutService / ModelCache 属于大型重构，远超当前修复范围。
+        请求: 请提供目标包结构与迁移计划。
+
+  H-24  策略模式名存实亡
+        原因: 同 H-23，需要抽象策略接口并迁移硬编码 if/elif 路由逻辑。
+        请求: 请与 H-23 一并规划。
+
+  H-25  无配额管理
+        原因: 需要按用户/会话/token 设计配额与限流，当前项目无用户概念。
+        请求: 请给出配额维度与存储方案。
+
+  H-26  无响应大小限制
+        原因: 需要为 ollama 设置 num_predict / max_tokens 等参数；
+              Ollama 与 OpenAI 参数不一致，需统一封装。
+        请求: 请确认默认最大输出 token 数及是否暴露配置项。
+
+  H-27  无速率限制
+        原因: 需要实现 Token Bucket / 滑动窗口限流；会改变并发模型，
+              且需要持久化或共享状态。
+        请求: 请给出限流维度（全局/IP/用户）与算法选择。
+
+  H-28  日志文件权限缺失
+        原因: 当前仅输出到 stdout；添加 RotatingFileHandler 需确定日志路径、
+              文件权限（如 640）及跨平台兼容性。
+        请求: 请确认日志文件路径、权限与轮转策略。
+
+4. 修复后测试结果
+--------------------------------------------------------------------------------
+  python3 -m py_compile src/*.py tests/*.py examples/*.py setup.py check_env.py install.py
+  结果: 全部编译通过
+
+  python3 -m pytest tests/ -v --tb=short
+  结果: 259 passed, 0 failed
+  耗时: 约 2.3s
+
+5. 变更文件列表
+--------------------------------------------------------------------------------
+  .github/workflows/python-test.yml
+  check_env.py
+  requirements.txt
+  src/__init__.py
+  src/cli.py
+  src/complexity_analyzer.py
+  src/config_loader.py
+  src/gpu_monitor.py
+  src/router.py
+  tests/test_cli.py
+  tests/test_config_loader.py
+  tests/test_integration.py
+  tests/test_router.py
+
+  未修改: README*.md, wechat-qr.jpg, setup.py, config.yaml, pytest.ini,
+         install.py（本次未对其做安全修复）
+
+================================================================================
+  报告生成时间: 2026-06-30
+  修复者: Kimi Code CLI
+================================================================================

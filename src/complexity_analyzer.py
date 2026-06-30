@@ -67,7 +67,6 @@ class ComplexityAnalyzer:
     @staticmethod
     @functools.lru_cache(maxsize=512)
     def _cached_analyze(
-        prompt: str,
         simple_score: int,
         medium_score: int,
         complex_score: int,
@@ -78,7 +77,10 @@ class ComplexityAnalyzer:
         chinese_chars: int,
         english_words: int,
     ) -> Tuple[str, float, int, bool, bool]:
-        """缓存分析结果的核心计算（纯函数，避免重复正则扫描）"""
+        """缓存分析结果的核心计算（纯函数，避免重复正则扫描）
+
+        H-9: 缓存键不再包含原始 prompt，仅使用已提取的特征值，防止隐私泄露。
+        """
         requires_code = code_blocks > 0 or medium_score > 0
         requires_reasoning = reasoning_indicators >= 2 or complex_score > 0
         estimated_tokens = int(chinese_chars * 1.5 + english_words * 1.3 + length * 0.1)
@@ -151,14 +153,13 @@ class ComplexityAnalyzer:
         chinese_chars = len(re.findall(r'[\u4e00-\u9fff]', prompt))
         english_words = len(re.findall(r'[a-zA-Z]+', prompt))
 
-        # 使用缓存避免重复计算相同输入
+        # 使用缓存避免重复计算相同输入（H-9: 不将原始 prompt 作为缓存键）
         complexity_value, confidence, estimated_tokens, requires_code, requires_reasoning = self._cached_analyze(
-            prompt,
             simple_score,
             medium_score,
             complex_score,
             length,
-        code_blocks,
+            code_blocks,
             inline_code,
             reasoning_indicators,
             chinese_chars,

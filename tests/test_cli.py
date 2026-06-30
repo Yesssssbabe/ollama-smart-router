@@ -1,4 +1,5 @@
 # test_cli.py — 命令行测试
+import dataclasses
 import pytest
 import argparse
 import sys
@@ -9,7 +10,7 @@ from src.cli import (
     check_ollama_connection, print_ollama_error, print_error, print_tip,
     validate_config_path
 )
-from src.router import RouterConfig, RoutingStrategy
+from src.router import SmartRouter, RouterConfig, RoutingStrategy
 
 
 class TestCreateParser:
@@ -178,8 +179,7 @@ class TestLoadConfig:
         parser = create_parser()
         args = parser.parse_args(["-m", ""])
         
-        base = RouterConfig()
-        base.small_model = "existing"
+        base = RouterConfig(small_model="existing")
         with patch('src.cli.config_from_yaml', return_value=base):
             with patch('src.cli.merge_env_vars', side_effect=lambda c: c):
                 config = load_config(args)
@@ -341,7 +341,7 @@ class TestInteractiveMode:
         assert "/quit" in captured.out
 
     def test_setkey_command(self, capsys):
-        router = Mock()
+        router = SmartRouter(RouterConfig())
         with patch('builtins.input', side_effect=["/setkey", "/quit"]):
             with patch('getpass.getpass', return_value="secret-key"):
                 interactive_mode(router)

@@ -1,5 +1,6 @@
 # test_config_loader.py — 配置加载测试
 import os
+import dataclasses
 import pytest
 from unittest.mock import patch, mock_open
 from pathlib import Path
@@ -177,8 +178,7 @@ class TestConfigFromYaml:
         assert config.cloud_api_key is None
 
     def test_base_config_override(self):
-        base = RouterConfig()
-        base.small_model = "base-model"
+        base = RouterConfig(small_model="base-model")
         
         yaml_data = {"models": {"small": {"name": "yaml-model"}}}
         with patch('src.config_loader.load_yaml_config', return_value=yaml_data):
@@ -277,8 +277,7 @@ class TestMergeEnvVars:
 
     def test_empty_env_var_not_overriding(self):
         """空字符串环境变量不覆盖现有配置"""
-        config = RouterConfig()
-        config.cloud_api_key = "existing-key"
+        config = RouterConfig(cloud_api_key="existing-key")
         
         with patch.dict(os.environ, {"DEEPSEEK_API_KEY": ""}, clear=True):
             config = merge_env_vars(config)
@@ -305,19 +304,21 @@ class TestMergeEnvVars:
             with patch('src.config_loader.load_yaml_config', return_value=yaml_data):
                 config = config_from_yaml("config.yaml")
                 config = merge_env_vars(config)
-                config.cloud_api_key = "cli-key"  # 模拟 CLI 覆盖
+                config = dataclasses.replace(config, cloud_api_key="cli-key")  # 模拟 CLI 覆盖
         
         assert config.cloud_api_key == "cli-key"
 
-    def test_merge_returns_same_object(self):
-        """merge_env_vars 返回同一对象（修改传入对象）"""
+    def test_merge_returns_new_object(self):
+        """merge_env_vars 通过 dataclasses.replace 返回新对象"""
         config = RouterConfig()
         config_id = id(config)
         
         with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test"}, clear=True):
             result = merge_env_vars(config)
         
-        assert id(result) == config_id
+        assert id(result) != config_id
+        assert result.cloud_api_key == "test"
+        assert config.cloud_api_key is None  # 原对象未被修改
 
 
 class TestConfigLoaderSecurity:

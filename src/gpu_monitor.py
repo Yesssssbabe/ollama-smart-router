@@ -29,7 +29,8 @@ class GPUMemoryInfo:
 class GPUMonitor:
     """GPU监控器 - 专门适配NVIDIA RTX系列"""
 
-    def __init__(self, cache_ttl: float = 2.0):
+    def __init__(self, cache_ttl: float = 0.5):
+        # H-8: 降低默认 TTL，避免 2 秒内显存剧烈变化导致路由决策依据过时
         self.has_nvidia_smi = self._check_nvidia_smi()
         self._cache_ttl = cache_ttl
         self._cache = None

@@ -31,11 +31,11 @@ jobs:
     - name: Lint with ruff
       run: |
         pip install ruff
-        ruff check src/ || true
+        ruff check src/
     
     - name: Test with pytest
       run: |
-        pytest tests/ -v || true
+        pytest tests/ -v
 
   code-quality:
     runs-on: ubuntu-latest
@@ -52,7 +52,7 @@ jobs:
         pip install black ruff
     
     - name: Check formatting with black
-      run: black --check src/ || true
+      run: black --check src/
     
     - name: Lint with ruff
-      run: ruff check src/ || true
+      run: ruff check src/

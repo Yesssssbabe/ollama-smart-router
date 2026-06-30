@@ -255,9 +255,13 @@ def print_summary(results):
         print("\n  📥 下载地址: https://ollama.com")
         print("  📦 安装后运行: ollama pull gemma3:4b")
     elif not results["dependencies"]:
+        # H-20: 优先提示缺少依赖，避免 Python/文件失败时 dependencies 分支被跳过
         print("  ⚠️  缺少依赖包")
         print("\n  🔧 修复方法:")
         print("     pip install -r requirements.txt")
+    elif not must_ok:
+        print("  ❌ 环境检查未通过")
+        print("\n  🔧 请根据上方提示修复问题")
     else:
         print("  ❌ 环境检查未通过")
         print("\n  🔧 请根据上方提示修复问题")

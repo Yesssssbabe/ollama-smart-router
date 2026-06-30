@@ -1,4 +1,5 @@
 # test_router.py — 核心路由测试
+import dataclasses
 import pytest
 from unittest.mock import Mock, patch
 import threading
@@ -48,8 +49,8 @@ class TestSmartRouterRoute:
 
     def test_route_auto_complex(self, router, mock_openai_client):
         """复杂任务优先云端"""
-        router.config.cloud_api_key = "test-key"
-        router.config.prefer_cloud_for_complex = True
+        router.config = dataclasses.replace(router.config, cloud_api_key="test-key")
+        router.config = dataclasses.replace(router.config, prefer_cloud_for_complex=True)
         router._cloud_client = mock_openai_client
 
         # 固定分析器返回 complex，避免不同环境下启发式分析结果不一致
@@ -91,7 +92,7 @@ class TestSmartRouterRoute:
 
     def test_route_strategy_override_cloud(self, router, mock_openai_client):
         """强制 CLOUD 策略"""
-        router.config.cloud_api_key = "test-key"
+        router.config = dataclasses.replace(router.config, cloud_api_key="test-key")
         router._cloud_client = mock_openai_client
         
         result = router.route("任意内容", strategy=RoutingStrategy.CLOUD)
@@ -188,10 +189,10 @@ class TestSmartRouterExecution:
 
     def test_run_local_gpu_fallback_depth_limit(self, router):
         """GPU 降级深度限制"""
-        router.config.max_fallback_attempts = 0
+        router.config = dataclasses.replace(router.config, max_fallback_attempts=0)
         
         with pytest.raises(RuntimeError, match="最大降级次数"):
-            router._run_local_gpu("test", fallback_depth=0)
+            router._run_local_gpu("test", fallback_depth=1)
 
     def test_run_local_cpu_model_not_found(self, router):
         """模型不存在时抛出 RuntimeError 并提示下载"""
@@ -206,8 +207,8 @@ class TestSmartRouterExecution:
 
     def test_run_local_cpu_fallback_to_cloud(self, router, mock_openai_client):
         """CPU 失败且配置云端 key → fallback 到云端"""
-        router.config.cloud_api_key = "test-key"
-        router.config.auto_fallback = True
+        router.config = dataclasses.replace(router.config, cloud_api_key="test-key")
+        router.config = dataclasses.replace(router.config, auto_fallback=True)
         error = Exception("CPU inference failed")
         
         with patch('ollama.chat', side_effect=error):
@@ -218,8 +219,8 @@ class TestSmartRouterExecution:
 
     def test_run_local_cpu_no_cloud_fallback(self, router):
         """CPU 失败但没有云端 key → 直接抛出"""
-        router.config.cloud_api_key = None
-        router.config.auto_fallback = False
+        router.config = dataclasses.replace(router.config, cloud_api_key=None)
+        router.config = dataclasses.replace(router.config, auto_fallback=False)
         error = Exception("CPU inference failed")
         
         with patch('ollama.chat', side_effect=error):
@@ -228,7 +229,7 @@ class TestSmartRouterExecution:
 
     def test_run_cloud_success(self, router, mock_openai_client):
         """云端推理成功"""
-        router.config.cloud_api_key = "test-key"
+        router.config = dataclasses.replace(router.config, cloud_api_key="test-key")
         router._cloud_client = mock_openai_client
         
         result = router._run_cloud("test prompt")
@@ -240,7 +241,7 @@ class TestSmartRouterExecution:
 
     def test_run_cloud_no_api_key(self, router):
         """未配置 API key 抛出 RuntimeError"""
-        router.config.cloud_api_key = None
+        router.config = dataclasses.replace(router.config, cloud_api_key=None)
         router._cloud_client = None
         
         with pytest.raises(RuntimeError, match="云端客户端未初始化"):
@@ -248,8 +249,8 @@ class TestSmartRouterExecution:
 
     def test_run_cloud_failure_fallback(self, router, mock_ollama_response):
         """云端失败 fallback 到本地 CPU"""
-        router.config.cloud_api_key = "test-key"
-        router.config.auto_fallback = True
+        router.config = dataclasses.replace(router.config, cloud_api_key="test-key")
+        router.config = dataclasses.replace(router.config, auto_fallback=True)
         router._cloud_client = Mock()
         router._cloud_client.chat.completions.create.side_effect = Exception("API timeout")
         
@@ -260,8 +261,8 @@ class TestSmartRouterExecution:
 
     def test_run_cloud_empty_choices(self, router, mock_openai_client):
         """云端返回空 choices 且禁用 fallback 时抛出 RuntimeError"""
-        router.config.cloud_api_key = "test-key"
-        router.config.auto_fallback = False
+        router.config = dataclasses.replace(router.config, cloud_api_key="test-key")
+        router.config = dataclasses.replace(router.config, auto_fallback=False)
         mock_response = Mock()
         mock_response.choices = []
         mock_openai_client.chat.completions.create.return_value = mock_response
@@ -272,8 +273,8 @@ class TestSmartRouterExecution:
 
     def test_auto_route_complex_prefer_cloud(self, router, mock_openai_client):
         """复杂任务优先路由到云端"""
-        router.config.cloud_api_key = "test-key"
-        router.config.prefer_cloud_for_complex = True
+        router.config = dataclasses.replace(router.config, cloud_api_key="test-key")
+        router.config = dataclasses.replace(router.config, prefer_cloud_for_complex=True)
         router._cloud_client = mock_openai_client
         
         result = router._auto_route("写一篇学术论文", "complex")
@@ -285,9 +286,9 @@ class TestSmartRouterExecution:
     ):
         """复杂任务无云端 → fallback 到 CPU 大模型"""
         router = SmartRouter(default_config)
-        router.config.cloud_api_key = None
-        router.config.prefer_cloud_for_complex = True
-        router.config.auto_fallback = True
+        router.config = dataclasses.replace(router.config, cloud_api_key=None)
+        router.config = dataclasses.replace(router.config, prefer_cloud_for_complex=True)
+        router.config = dataclasses.replace(router.config, auto_fallback=True)
         router.gpu_monitor = mock_gpu_monitor
         router.cpu_monitor = mock_cpu_monitor
         
@@ -298,8 +299,8 @@ class TestSmartRouterExecution:
 
     def test_auto_route_resource_exhaustion(self, router):
         """所有资源不足时抛出 RuntimeError"""
-        router.config.cloud_api_key = None
-        router.config.prefer_cloud_for_complex = True
+        router.config = dataclasses.replace(router.config, cloud_api_key=None)
+        router.config = dataclasses.replace(router.config, prefer_cloud_for_complex=True)
         router.gpu_monitor.get_free_vram_gb.return_value = 0.5
         router.cpu_monitor.get_memory_info.return_value = {
             "total_gb": 32.0, "available_gb": 0.5, "percent_used": 99.0
@@ -350,7 +351,7 @@ class TestSmartRouterExecution:
 
     def test_get_cloud_client_lazy_init(self, router):
         """延迟初始化只执行一次"""
-        router.config.cloud_api_key = "test-key"
+        router.config = dataclasses.replace(router.config, cloud_api_key="test-key")
         
         with patch('builtins.__import__') as mock_import:
             # Mock openai module
@@ -363,7 +364,7 @@ class TestSmartRouterExecution:
 
     def test_get_cloud_client_import_error(self, router, capsys):
         """未安装 openai 包时返回 None"""
-        router.config.cloud_api_key = "test-key"
+        router.config = dataclasses.replace(router.config, cloud_api_key="test-key")
         router._cloud_client = None
         
         with patch('builtins.__import__', side_effect=ImportError("No module named 'openai'")):
@@ -426,15 +427,14 @@ class TestSmartRouterExecution:
 
     def test_fallback_depth_limit(self, router):
         """降级深度限制防止递归死循环"""
-        router.config.max_fallback_attempts = 1
-        router.config.cloud_api_key = "test-key"
-        router.config.auto_fallback = True
+        router.config = dataclasses.replace(router.config, max_fallback_attempts=0)
+        router.config = dataclasses.replace(router.config, cloud_api_key="test-key")
+        router.config = dataclasses.replace(router.config, auto_fallback=True)
         
-        # GPU 失败 → CPU，CPU 失败 → Cloud，Cloud 失败 → CPU（应触发限制）
+        # GPU 失败 → CPU（应触发限制）
         with patch('ollama.chat', side_effect=Exception("GPU fail")):
-            with patch.object(router, '_run_cloud', side_effect=Exception("Cloud fail")):
-                with pytest.raises(RuntimeError, match="最大降级次数"):
-                    router._run_local_gpu("test")
+            with pytest.raises(RuntimeError, match="最大降级次数"):
+                router._run_local_gpu("test")
 
     def test_safe_extract_ollama_content(self, router):
         """安全提取 Ollama 响应内容"""
@@ -508,7 +508,7 @@ class TestSmartRouterExecution:
     def test_cloud_authentication_error(self, router, mock_openai_client):
         """云端认证失败"""
         import openai as oa
-        router.config.cloud_api_key = "test-key"
+        router.config = dataclasses.replace(router.config, cloud_api_key="test-key")
         mock_openai_client.chat.completions.create.side_effect = oa.AuthenticationError(
             "Invalid key", response=Mock(), body=Mock()
         )
@@ -520,8 +520,8 @@ class TestSmartRouterExecution:
     def test_cloud_rate_limit_error(self, router, mock_openai_client, mock_ollama_response):
         """云端限流 fallback 到 CPU"""
         import openai as oa
-        router.config.cloud_api_key = "test-key"
-        router.config.auto_fallback = True
+        router.config = dataclasses.replace(router.config, cloud_api_key="test-key")
+        router.config = dataclasses.replace(router.config, auto_fallback=True)
         mock_openai_client.chat.completions.create.side_effect = oa.RateLimitError(
             "Rate limited", response=Mock(), body=Mock()
         )
@@ -535,8 +535,8 @@ class TestSmartRouterExecution:
     def test_cloud_connection_error(self, router, mock_openai_client, mock_ollama_response):
         """云端连接失败 fallback 到 CPU"""
         import openai as oa
-        router.config.cloud_api_key = "test-key"
-        router.config.auto_fallback = True
+        router.config = dataclasses.replace(router.config, cloud_api_key="test-key")
+        router.config = dataclasses.replace(router.config, auto_fallback=True)
         mock_openai_client.chat.completions.create.side_effect = oa.APIConnectionError(
             message="Connection failed",
             request=Mock(),
@@ -652,11 +652,11 @@ class TestRouterConfig:
         with pytest.raises(ValueError, match="必须大于 0"):
             RouterConfig(num_ctx=0)
 
-    def test_config_mutable(self):
-        """配置可变性"""
+    def test_config_immutable(self):
+        """配置不可变（frozen dataclass）"""
         config = RouterConfig()
-        config.small_model = "changed"
-        assert config.small_model == "changed"
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            config.small_model = "changed"
 
     def test_config_default_max_fallback(self):
         config = RouterConfig()
@@ -727,14 +727,14 @@ class TestSmartRouterSecurity:
 
     def test_get_cloud_client_init_exception_returns_none(self, router, caplog):
         """OpenAI 初始化异常时返回 None"""
-        router.config.cloud_api_key = "test-key"
+        router.config = dataclasses.replace(router.config, cloud_api_key="test-key")
         with patch('openai.OpenAI', side_effect=RuntimeError("init failed")):
             client = router._get_cloud_client()
         assert client is None
 
     def test_get_cloud_client_thread_safe_singleton(self, router):
         """双重检查锁保证只创建一个云端客户端"""
-        router.config.cloud_api_key = "test-key"
+        router.config = dataclasses.replace(router.config, cloud_api_key="test-key")
         clients = []
         barrier = threading.Barrier(10)
 
@@ -766,7 +766,7 @@ class TestOllamaTimeout:
 
     def test_timeout_expired_rebuilds_executor(self, router):
         """超时后应重建线程池，避免 worker 耗尽"""
-        router.config.local_timeout = 0.1
+        router.config = dataclasses.replace(router.config, local_timeout=0.1)
         old_executor = router._executor
         with patch('ollama.chat', side_effect=lambda **kwargs: __import__("time").sleep(10)):
             with pytest.raises(concurrent.futures.TimeoutError):

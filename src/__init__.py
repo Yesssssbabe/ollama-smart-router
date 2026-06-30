@@ -18,14 +18,15 @@ if sys.platform == "win32" and sys.stdout is not None and hasattr(sys.stdout, "r
     except (AttributeError, OSError):
         pass
 
-# 配置根日志记录器，允许用户通过配置文件覆盖
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S',
-    handlers=[logging.StreamHandler(sys.stdout)],
-    force=False  # 不强制覆盖已有配置，尊重用户预配置
-)
+# H-12: 仅在根日志记录器尚未配置时初始化，避免污染用户已有的日志配置
+if not logging.root.handlers:
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S',
+        handlers=[logging.StreamHandler(sys.stdout)],
+        force=False  # 不强制覆盖已有配置，尊重用户预配置
+    )
 
 # 获取模块日志记录器
 logger = logging.getLogger(__name__)

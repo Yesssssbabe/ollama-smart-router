@@ -1,4 +1,5 @@
 # test_integration.py — 集成测试
+import dataclasses
 import pytest
 from unittest.mock import Mock, patch
 
@@ -88,9 +89,8 @@ class TestEndToEnd:
 
     def test_degradation_chain_gpu_to_cpu_to_cloud(self, full_router, mock_ollama_response):
         """降级链：GPU → CPU → Cloud（GPU失败，CPU失败，Cloud成功）"""
-        full_router.config.cloud_api_key = "test-key"
-        full_router.config.auto_fallback = True
-        full_router.config.max_fallback_attempts = 3
+        full_router.config = dataclasses.replace(full_router.config, auto_fallback=True)
+        full_router.config = dataclasses.replace(full_router.config, max_fallback_attempts=3)
         
         oom_error = Exception("CUDA out of memory")
         cpu_error = Exception("CPU inference failed")
@@ -105,9 +105,8 @@ class TestEndToEnd:
 
     def test_degradation_chain_max_depth(self, full_router):
         """降级链：GPU → CPU → 失败（达到最大降级次数）"""
-        full_router.config.max_fallback_attempts = 1
-        full_router.config.cloud_api_key = "test-key"
-        full_router.config.auto_fallback = True
+        full_router.config = dataclasses.replace(full_router.config, max_fallback_attempts=1)
+        full_router.config = dataclasses.replace(full_router.config, auto_fallback=True)
         
         oom_error = Exception("CUDA out of memory")
         
@@ -118,10 +117,11 @@ class TestEndToEnd:
 
     def test_complex_task_no_cloud_fallback_to_cpu(self, mock_ollama_response):
         """复杂任务无云端 fallback 到 CPU"""
-        config = RouterConfig()
-        config.cloud_api_key = None
-        config.prefer_cloud_for_complex = True
-        config.auto_fallback = True
+        config = RouterConfig(
+            cloud_api_key=None,
+            prefer_cloud_for_complex=True,
+            auto_fallback=True,
+        )
         router = SmartRouter(config)
         
         router.gpu_monitor = Mock()
@@ -197,8 +197,8 @@ class TestEndToEnd:
 
     def test_no_resources_available(self, full_router):
         """所有资源耗尽"""
-        full_router.config.cloud_api_key = None
-        full_router.config.prefer_cloud_for_complex = True
+        full_router.config = dataclasses.replace(full_router.config, cloud_api_key=None)
+        full_router.config = dataclasses.replace(full_router.config, prefer_cloud_for_complex=True)
         full_router.gpu_monitor.get_free_vram_gb.return_value = 0.5
         full_router.cpu_monitor.get_memory_info.return_value = {
             "total_gb": 32.0, "available_gb": 0.5, "percent_used": 99.0
@@ -243,7 +243,7 @@ class TestEndToEnd:
         mock_response = Mock()
         mock_response.choices = []
         full_router._cloud_client.chat.completions.create.return_value = mock_response
-        full_router.config.auto_fallback = True
+        full_router.config = dataclasses.replace(full_router.config, auto_fallback=True)
         
         with patch('ollama.chat', return_value=mock_ollama_response):
             result = full_router.route("test", strategy=RoutingStrategy.CLOUD)
@@ -265,4 +265,5 @@ class TestEndToEnd:
             
             assert result.source == "local_gpu"
         # 退出后资源已释放
-        assert router._executor._shutdown
+        assert router._is_closed
+        assert router._executor is None
