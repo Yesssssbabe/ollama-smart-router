@@ -59,7 +59,7 @@ python3 --version
 
 **方法 A：git がある場合**
 ```bash
-git clone https://github.com/yourusername/ollama-smart-router.git
+git clone https://github.com/Yesssssbabe/ollama-smart-router.git
 cd ollama-smart-router
 ```
 
@@ -126,7 +126,7 @@ python3 --version     # Mac/Linux
 
 ```bash
 # プロジェクトをダウンロード
-git clone https://github.com/yourusername/ollama-smart-router.git
+git clone https://github.com/Yesssssbabe/ollama-smart-router.git
 cd ollama-smart-router
 
 # 依存関係をインストール

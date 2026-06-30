@@ -59,7 +59,7 @@ python3 --version
 
 **方式 A：有 git**
 ```bash
-git clone https://github.com/你的用户名/ollama-smart-router.git
+git clone https://github.com/Yesssssbabe/ollama-smart-router.git
 cd ollama-smart-router
 ```
 
@@ -126,7 +126,7 @@ python3 --version     # Mac/Linux
 
 ```bash
 # 下载项目
-git clone https://github.com/你的用户名/ollama-smart-router.git
+git clone https://github.com/Yesssssbabe/ollama-smart-router.git
 cd ollama-smart-router
 
 # 安装依赖

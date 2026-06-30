@@ -59,7 +59,7 @@ python3 --version
 
 **Option A: With git**
 ```bash
-git clone https://github.com/yourusername/ollama-smart-router.git
+git clone https://github.com/Yesssssbabe/ollama-smart-router.git
 cd ollama-smart-router
 ```
 
@@ -126,7 +126,7 @@ python3 --version     # Mac/Linux
 
 ```bash
 # Download project
-git clone https://github.com/yourusername/ollama-smart-router.git
+git clone https://github.com/Yesssssbabe/ollama-smart-router.git
 cd ollama-smart-router
 
 # Install dependencies

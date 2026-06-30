@@ -59,7 +59,7 @@ python3 --version
 
 **방식 A: git이 있는 경우**
 ```bash
-git clone https://github.com/yourusername/ollama-smart-router.git
+git clone https://github.com/Yesssssbabe/ollama-smart-router.git
 cd ollama-smart-router
 ```
 
@@ -126,7 +126,7 @@ python3 --version     # Mac/Linux
 
 ```bash
 # 프로젝트 다운로드
-git clone https://github.com/yourusername/ollama-smart-router.git
+git clone https://github.com/Yesssssbabe/ollama-smart-router.git
 cd ollama-smart-router
 
 # 의존성 설치
