@@ -8,6 +8,25 @@
 
 ---
 
+## 🚀 프로젝트 개요
+
+Ollama Smart Router는 사용자의 요청 복잡도와 하드웨어 상태를 실시간으로 분석하여, 가장 적합한 추론 엔진(로컬 GPU/CPU 또는 클라우드 API)으로 자동 라우팅하는 지능형 모델 게이트웨이입니다. 간단한 작업은 빠르고 저렴한 로컬 모델로 처리하고, 복잡한 작업만 클라우드나 대형 모델로 전환하여 추론 비용과 응답 시간을 효과적으로 절감합니다.
+
+```mermaid
+flowchart LR
+    A[User Request] --> B[SmartRouter]
+    B --> C[ComplexityAnalyzer]
+    C --> D{Route Decision}
+    D -->|Simple + GPU available| E[Local GPU]
+    D -->|Simple / GPU full| F[Local CPU]
+    D -->|Complex task| G[Cloud API]
+    E --> H[Return Response]
+    F --> H
+    G --> H
+```
+
+위 다이어그램은 사용자 요청이 SmartRouter를 통해 ComplexityAnalyzer로 전달되고, 작업 난이도와 리소스 상태에 따라 Local GPU, Local CPU, Cloud API 중 하나로 라우팅된 후 최종 응답을 반환하는 전체 흐름을 보여줍니다.
+
 ## 📋 목차
 
 - [요구사항](#요구사항)

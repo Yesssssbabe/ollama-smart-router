@@ -8,6 +8,25 @@ Let local small models handle simple tasks, and automatically switch to large mo
 
 ---
 
+## 🚀 Project Overview
+
+**Ollama Smart Router** is an intelligent inference router that analyzes every incoming request and automatically selects the best execution path. It routes simple tasks to fast local models running on your GPU or CPU, and forwards complex tasks to cloud APIs when needed — balancing speed, cost, and answer quality without manual model selection.
+
+```mermaid
+flowchart LR
+    A[User Request] --> B[SmartRouter]
+    B --> C[ComplexityAnalyzer]
+    C --> D{Route Decision}
+    D -->|GPU| E[Local GPU]
+    D -->|CPU| F[Local CPU]
+    D -->|Cloud| G[Cloud API]
+    E --> H[Return Response]
+    F --> H
+    G --> H
+```
+
+---
+
 ## 📋 Table of Contents
 
 - [Requirements](#requirements)

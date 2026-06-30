@@ -8,6 +8,25 @@
 
 ---
 
+## 🌟 プロジェクト概要
+
+Ollama Smart Routerは、ユーザーからのリクエストを受け取り、タスクの複雑さに基づいて最適な推論エンジン（ローカルGPU、ローカルCPU、クラウドAPI）に自動ルーティングするインテリジェントモデルルーターです。シンプルなタスクはローカルモデルで高速・低コストに処理し、複雑なタスクは大規模モデルやクラウドAPIに切り替えることで、応答速度とコスト効率のバランスを最適化します。
+
+以下の図は、リクエストがSmartRouterを経由してComplexityAnalyzerで評価され、最適な推論先に振り分けられるまでの流れを示しています。
+
+```mermaid
+flowchart LR
+    UserRequest[User Request] --> SmartRouter
+    SmartRouter --> ComplexityAnalyzer
+    ComplexityAnalyzer --> RouteDecision{Route Decision}
+    RouteDecision -->|VRAM available| LocalGPU[Local GPU]
+    RouteDecision -->|VRAM insufficient| LocalCPU[Local CPU]
+    RouteDecision -->|Complex task + API configured| CloudAPI[Cloud API]
+    LocalGPU --> Response[Return Response]
+    LocalCPU --> Response
+    CloudAPI --> Response
+```
+
 ## 📋 目次
 
 - [要件](#要件)

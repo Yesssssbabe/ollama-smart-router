@@ -8,6 +8,27 @@
 
 ---
 
+## 🚀 项目简介
+
+Ollama Smart Router 是一个智能模型调度器，能够根据任务复杂度自动选择本地 GPU、本地 CPU 或云端 API 的最佳推理路径。它让本地小模型处理简单任务，复杂任务自动切换大模型或云端 API，从而在速度与成本之间取得最佳平衡。
+
+```mermaid
+flowchart LR
+    A[用户请求] --> B[SmartRouter]
+    B --> C[ComplexityAnalyzer]
+    C --> D{路由决策}
+    D --> E[本地 GPU]
+    D --> F[本地 CPU]
+    D --> G[云端 API]
+    E --> H[返回响应]
+    F --> H
+    G --> H
+```
+
+上图展示了系统的工作流程：用户请求首先由 SmartRouter 接收，再通过 ComplexityAnalyzer 分析任务复杂度，最后根据复杂度与硬件状态路由到本地 GPU、本地 CPU 或云端 API，并统一返回响应。
+
+---
+
 ## 📋 目录
 
 - [配置要求](#配置要求)

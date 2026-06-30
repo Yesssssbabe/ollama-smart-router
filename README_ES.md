@@ -8,6 +8,27 @@ Deja que los modelos pequeños locales manejen tareas simples, y cambia automát
 
 ---
 
+## 🌐 Visión general del proyecto
+
+Ollama Smart Router es un enrutador de inferencia inteligente que analiza automáticamente la complejidad de cada solicitud y la dirige al modelo más adecuado entre GPU local, CPU local o API en la nube. Su objetivo es equilibrar velocidad, costo y calidad de respuesta, aprovechando al máximo los recursos disponibles en tu equipo sin renunciar a modelos potentes en la nube cuando la tarea lo requiere.
+
+```mermaid
+flowchart LR
+    A["User Request"] --> B["SmartRouter"]
+    B --> C["ComplexityAnalyzer"]
+    C --> D{"Select Route"}
+    D --> E["Local GPU"]
+    D --> F["Local CPU"]
+    D --> G["Cloud API"]
+    E --> H["Return Response"]
+    F --> H
+    G --> H
+```
+
+El diagrama muestra el flujo principal: cada solicitud pasa por el `SmartRouter`, que usa el `ComplexityAnalyzer` para decidir si se resuelve con un modelo local en GPU, un modelo local en CPU o una API en la nube, y finalmente se devuelve la respuesta al usuario.
+
+---
+
 ## 📋 Tabla de contenidos
 
 - [Requisitos](#requisitos)
