@@ -66,6 +66,27 @@ class ComplexityAnalyzer:
         3. 代码块数量
         4. 问题深度指示词
         """
+        # 输入验证
+        if prompt is None:
+            raise ValueError("prompt 不能为 None")
+        if not isinstance(prompt, str):
+            raise TypeError(f"prompt 必须是字符串类型，实际为 {type(prompt).__name__}")
+        
+        prompt = prompt.strip()
+        if len(prompt) == 0:
+            return TaskAnalysis(
+                complexity=TaskComplexity.SIMPLE,
+                confidence=0.0,
+                estimated_tokens=0,
+                requires_code=False,
+                requires_reasoning=False
+            )
+        
+        # 长度截断保护，避免正则性能问题
+        MAX_ANALYSIS_LENGTH = 50000
+        if len(prompt) > MAX_ANALYSIS_LENGTH:
+            prompt = prompt[:MAX_ANALYSIS_LENGTH]
+        
         prompt_lower = prompt.lower()
         length = len(prompt)
         

@@ -6,9 +6,12 @@ pyyaml>=6.0
 # 云端API支持 (可选)
 openai>=1.0.0
 
-# 开发依赖 (可选)
+# 测试依赖 (必须)
 pytest>=7.0.0
 pytest-asyncio>=0.21.0
+pytest-cov>=4.0.0
+
+# 开发依赖 (可选)
 black>=23.0.0
 ruff>=0.1.0
 

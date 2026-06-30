@@ -1,8 +1,19 @@
 """
 命令行交互界面
+
+修复内容:
+- HIGH-1: 移除 --cloud-key 参数，防止API密钥泄露到shell history
+- HIGH-1: 交互模式添加 /setkey 命令，使用 getpass 安全输入
+- HIGH-14: 显式传入 --config 但文件不存在时，报错并退出，不再静默回退
+- MEDIUM-1: 添加 --config 路径验证，防止路径遍历攻击
+- MEDIUM-2: 交互模式添加输入长度限制（10万字符）
+- H8: 空字符串参数使用 is not None and .strip() 双重检查
+- L4: 在 load_config 函数顶部添加配置优先级注释
+- 交互模式细化异常处理，区分 KeyboardInterrupt/EOFError/SystemExit
 """
 
 import argparse
+import getpass
 import os
 import sys
 from typing import Optional
@@ -10,6 +21,21 @@ from typing import Optional
 from .router import SmartRouter, RouterConfig, RoutingStrategy
 from .gpu_monitor import GPUMonitor, CPUMonitor
 from .config_loader import config_from_yaml, merge_env_vars
+
+MAX_PROMPT_LENGTH = 100000  # 交互模式最大输入长度（约100KB）
+
+
+def validate_config_path(path: str) -> str:
+    """验证配置文件路径，防止路径遍历攻击"""
+    abs_path = os.path.abspath(path)
+    cwd = os.path.abspath(os.getcwd())
+    home = os.path.expanduser("~")
+    # 允许当前工作目录下的文件，或用户主目录下的配置文件
+    if not abs_path.startswith(cwd) and not abs_path.startswith(home):
+        raise argparse.ArgumentTypeError(
+            f"配置文件路径必须在当前工作目录或用户主目录下: {path}"
+        )
+    return path
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -68,15 +94,14 @@ def create_parser() -> argparse.ArgumentParser:
         help="显示硬件状态"
     )
 
-    parser.add_argument(
-        "--cloud-key",
-        help="云端API密钥"
-    )
+    # HIGH-1: --cloud-key 已移除，强制使用 DEEPSEEK_API_KEY 环境变量
+    # 交互模式可使用 /setkey 命令通过 getpass 安全输入
 
     parser.add_argument(
         "--config",
-        default="config.yaml",
-        help="配置文件路径 (默认: config.yaml)"
+        default=None,
+        type=validate_config_path,
+        help="配置文件路径 (默认: 搜索当前目录 config.yaml 及 ~/.config/)"
     )
 
     return parser
@@ -87,12 +112,16 @@ def interactive_mode(router: SmartRouter):
     print("=" * 50)
     print("🤖 Ollama Smart Router - 交互模式")
     print("=" * 50)
-    print("命令: /quit (退出), /status (状态), /stats (统计)")
+    print("命令: /quit (退出), /status (状态), /stats (统计), /setkey (设置API密钥), /help (帮助)")
     print("-" * 50)
 
     while True:
         try:
-            prompt = input("\n你: ").strip()
+            try:
+                prompt = input("\n你: ").strip()
+            except EOFError:
+                print("\n再见!")
+                break
 
             if not prompt:
                 continue
@@ -102,13 +131,43 @@ def interactive_mode(router: SmartRouter):
                 break
             elif prompt == "/status":
                 router.gpu_monitor.print_status()
-                router.cpu_monitor.print_status()
+                try:
+                    router.cpu_monitor.print_status()
+                except Exception as e:
+                    print(f"⚠️ CPU状态获取失败: {e}")
                 continue
             elif prompt == "/stats":
                 router.print_stats()
                 continue
+            elif prompt == "/setkey":
+                # HIGH-1: 使用 getpass 安全输入，避免密钥泄露到屏幕和 history
+                try:
+                    key = getpass.getpass("请输入 API 密钥 (输入不显示): ")
+                    if key.strip():
+                        router.config.cloud_api_key = key.strip()
+                        # 重置云端客户端，下次使用时重新初始化
+                        router._cloud_client = None
+                        print("✅ API 密钥已设置")
+                    else:
+                        print("⚠️ 输入为空，未设置密钥")
+                except EOFError:
+                    print("⚠️ 无法读取输入")
+                continue
+            elif prompt == "/help":
+                print("可用命令:")
+                print("  /quit    - 退出交互模式")
+                print("  /status  - 显示硬件状态")
+                print("  /stats   - 显示使用统计")
+                print("  /setkey  - 安全设置云端 API 密钥 (通过环境变量 DEEPSEEK_API_KEY 更推荐)")
+                print("  /help    - 显示此帮助")
+                continue
             elif prompt.startswith("/"):
-                print(f"未知命令: {prompt}")
+                print(f"未知命令: {prompt}，输入 /help 查看可用命令")
+                continue
+
+            # MEDIUM-2: 输入长度限制
+            if len(prompt) > MAX_PROMPT_LENGTH:
+                print(f"❌ 输入过长，最大支持 {MAX_PROMPT_LENGTH} 字符")
                 continue
 
             print()
@@ -118,6 +177,9 @@ def interactive_mode(router: SmartRouter):
         except KeyboardInterrupt:
             print("\n再见!")
             break
+        except (SystemExit, GeneratorExit):
+            # 系统退出异常应继续向上传播，不得吞没
+            raise
         except Exception as e:
             print(f"❌ 错误: {e}")
 
@@ -147,35 +209,61 @@ def print_ollama_error():
     print_error("无法连接到 Ollama")
     print("可能的原因：")
     print("  1. Ollama 未安装")
-    print("  2. Ollama 未运行（任务栏没有羊驼图标）")
+    if sys.platform == "darwin":
+        print("  2. Ollama 未运行（菜单栏没有羊驼图标）")
+    elif sys.platform == "win32":
+        print("  2. Ollama 未运行（系统托盘图标）")
+    else:
+        print("  2. Ollama 未运行")
     print("\n解决方法：")
     print("  • 下载安装: https://ollama.com")
-    print("  • 启动 Ollama 应用")
+    if sys.platform == "darwin":
+        print("  • 启动 Ollama 应用")
+    elif sys.platform == "win32":
+        print("  • 启动 Ollama 应用")
+    else:
+        print("  • 启动 Ollama 服务: systemctl start ollama")
     print("  • 命令行测试: ollama list")
 
 
 def load_config(args) -> RouterConfig:
-    """根据命令行参数加载配置"""
-    # 从 YAML 加载
-    config_path = args.config if args.config and os.path.exists(args.config) else None
+    """
+    根据命令行参数加载配置
+
+    配置优先级（从高到低）:
+    1. 命令行参数 (args)
+    2. 环境变量 (os.environ)
+    3. YAML 配置文件
+    """
+    # HIGH-14: 如果用户显式传入 --config，但文件不存在，必须报错并退出
+    # 不静默回退到默认搜索路径
+    if args.config is not None:
+        if not os.path.exists(args.config):
+            print_error(f"指定的配置文件不存在: {args.config}")
+            sys.exit(1)
+        config_path = args.config
+    else:
+        # 未显式传入 --config，使用默认搜索路径
+        config_path = None
+
     config = config_from_yaml(config_path)
 
     # 环境变量覆盖
     config = merge_env_vars(config)
 
-    # 命令行参数覆盖
-    if args.cloud_key:
-        config.cloud_api_key = args.cloud_key
-    if args.model:
+    # H8: 命令行参数覆盖，使用 is not None and .strip() 双重检查
+    # 确保空字符串和纯空格字符串不会覆盖有效配置
+    if args.model is not None and args.model.strip():
+        model = args.model.strip()
         # 如果用户指定了模型，强制使用该模型作为 small/medium/large
-        config.small_model = args.model
-        config.medium_model = args.model
-        config.large_model = args.model
+        config.small_model = model
+        config.medium_model = model
+        config.large_model = model
 
     return config
 
 
-def main():
+def main() -> int:
     """主入口"""
     parser = create_parser()
     args = parser.parse_args()
@@ -193,7 +281,13 @@ def main():
         return 0
 
     # 创建配置
-    config = load_config(args)
+    try:
+        config = load_config(args)
+    except SystemExit:
+        raise
+    except Exception as e:
+        print_error(f"配置加载失败: {e}")
+        return 1
 
     # 映射策略
     strategy_map = {
@@ -249,6 +343,8 @@ def main():
 
         return 1
 
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

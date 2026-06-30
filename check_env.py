@@ -1,12 +1,29 @@
 #!/usr/bin/env python3
 """
 环境检查脚本 - 帮助用户快速诊断安装问题
+
+修复内容 (2025-07-10):
+1. 修复裸 except: 捕获系统异常 (CRIT-2) → 使用具体异常类型
+2. 修复 model_line.split()[0] 的 IndexError 风险 → 添加长度检查
+3. 限制异常信息长度，避免敏感信息泄露，仅打印异常类型
+4. 补全 required_files 列表，新增 src/config_loader.py、src/gpu_monitor.py 等关键文件
+5. 统一超时处理，所有 subprocess.run 添加 timeout 参数
+6. 增加 KeyboardInterrupt 独立处理，确保 Ctrl+C 可中断程序
 """
 
 import sys
 import subprocess
 import os
+import logging
 from pathlib import Path
+
+# 初始化日志（可选，无配置文件时回退到默认）
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler()]
+)
+logger = logging.getLogger(__name__)
 
 
 def print_section(title):
@@ -61,15 +78,28 @@ def check_ollama():
                         print_status("Ollama 运行中", True, f"{model_count} 个模型")
                         # 显示已安装的模型
                         for model_line in models[1:4]:  # 最多显示3个
-                            model_name = model_line.split()[0] if model_line.split() else "?"
+                            parts = model_line.split()
+                            model_name = parts[0] if parts else "unknown"
                             print(f"        📦 {model_name}")
                     else:
                         print_status("Ollama 运行中", True, "无模型")
                         print("     ⚠️  建议运行: ollama pull gemma3:4b")
                     return True
-            except:
-                print_status("Ollama 运行状态", False, "无法连接")
-                print("     ⚠️  请启动 Ollama 应用（任务栏羊驼图标）")
+            except subprocess.TimeoutExpired:
+                print_status("Ollama 运行状态", False, "查询超时")
+                print("     ⚠️  Ollama 响应缓慢，请检查服务状态")
+                return False
+            except FileNotFoundError:
+                print_status("Ollama 运行状态", False, "命令未找到")
+                print("     ⚠️  请确保 Ollama 已安装并添加到 PATH")
+                return False
+            except subprocess.CalledProcessError as e:
+                print_status("Ollama 运行状态", False, f"返回错误码 {e.returncode}")
+                return False
+            except Exception as e:
+                # 保留未知异常的信息，但不吞没 KeyboardInterrupt
+                print_status("Ollama 运行状态", False, f"未知错误: {type(e).__name__}")
+                logger.debug(f"Ollama 运行检查详细错误: {e}")
                 return False
         else:
             print_status("Ollama 已安装", False, "")
@@ -79,7 +109,8 @@ def check_ollama():
         print("     📥 下载地址: https://ollama.com")
         return False
     except Exception as e:
-        print_status("Ollama 检查失败", False, str(e))
+        print_status("Ollama 检查失败", False, f"{type(e).__name__}")
+        logger.debug(f"Ollama 检查详细错误: {e}")
         return False
 
 
@@ -137,8 +168,18 @@ def check_gpu():
                         return True
             print_status("NVIDIA GPU", True, "已检测到")
             return True
-    except:
-        pass
+    except subprocess.TimeoutExpired:
+        print_status("NVIDIA GPU", False, "nvidia-smi 超时")
+        return False
+    except FileNotFoundError:
+        pass  # 继续检查其他GPU
+    except subprocess.CalledProcessError:
+        print_status("NVIDIA GPU", False, "nvidia-smi 返回错误")
+        return False
+    except Exception as e:
+        print_status("NVIDIA GPU", False, f"检测失败: {type(e).__name__}")
+        logger.debug(f"GPU 检查详细错误: {e}")
+        return False
     
     # 检查其他 GPU (macOS Metal 等)
     if sys.platform == "darwin":
@@ -157,8 +198,12 @@ def check_project_files():
     required_files = [
         "src/router.py",
         "src/__init__.py",
+        "src/complexity_analyzer.py",
+        "src/gpu_monitor.py",
+        "src/config_loader.py",
+        "src/cli.py",
         "requirements.txt",
-        "config.yaml"
+        "config.yaml",
     ]
     
     all_ok = True
@@ -217,33 +262,37 @@ def main():
         "gpu": False
     }
     
-    # 检查 Python
-    print_section("Python 环境")
-    results["python"] = check_python()
-    
-    # 检查项目文件
-    results["files"] = check_project_files()
-    
-    # 检查 Ollama
-    print_section("Ollama 检查")
-    results["ollama"] = check_ollama()
-    
-    # 检查依赖
-    print_section("依赖包检查")
-    results["dependencies"] = check_dependencies()
-    
-    # 检查 GPU
-    results["gpu"] = check_gpu()
-    
-    # 打印总结
-    print_summary(results)
+    try:
+        # 检查 Python
+        print_section("Python 环境")
+        results["python"] = check_python()
+        
+        # 检查项目文件
+        results["files"] = check_project_files()
+        
+        # 检查 Ollama
+        print_section("Ollama 检查")
+        results["ollama"] = check_ollama()
+        
+        # 检查依赖
+        print_section("依赖包检查")
+        results["dependencies"] = check_dependencies()
+        
+        # 检查 GPU
+        results["gpu"] = check_gpu()
+        
+        # 打印总结
+        print_summary(results)
+    except KeyboardInterrupt:
+        print("\n\n  ⚠️ 检查被用户中断")
+        return 130
     
     print("\n" + "="*60)
     print("  检查完成！")
     print("="*60 + "\n")
     
     # 返回状态码
-    return 0 if results["python"] and results["files"] else 1
+    return 0 if results["python"] and results["files"] and results["ollama"] else 1
 
 
 if __name__ == "__main__":

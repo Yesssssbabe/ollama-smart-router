@@ -1,14 +1,32 @@
 """
 Ollama Smart Router - 智能模型调度器
+
+修复内容:
+- HIGH-13: 修复 entry_points 为 src.cli:main，确保 pip install 后命令可用
+- Critical-2: 添加 README.md / requirements.txt 文件缺失保护
 """
 
 from setuptools import setup, find_packages
 
-with open("README.md", "r", encoding="utf-8") as fh:
-    long_description = fh.read()
+# 安全读取文件，带缺失保护
+long_description = ""
+try:
+    with open("README.md", "r", encoding="utf-8") as fh:
+        long_description = fh.read()
+except FileNotFoundError:
+    long_description = "Ollama Smart Router - 智能模型调度器"
 
-with open("requirements.txt", "r", encoding="utf-8") as fh:
-    requirements = [line.strip() for line in fh if line.strip() and not line.startswith("#")]
+requirements = []
+try:
+    with open("requirements.txt", "r", encoding="utf-8") as fh:
+        requirements = [line.strip() for line in fh if line.strip() and not line.startswith("#")]
+except FileNotFoundError:
+    requirements = [
+        "ollama>=0.4.0",
+        "psutil>=5.9.0",
+        "pyyaml>=6.0",
+        "openai>=1.0.0",
+    ]
 
 setup(
     name="ollama-smart-router",
@@ -39,10 +57,11 @@ setup(
         "cloud": ["openai>=1.0.0"],
         "dev": ["pytest>=7.0.0", "black>=23.0.0", "ruff>=0.1.0"],
     },
+    # HIGH-13: 修复为 src.cli:main，因为 cli 在 src 包下
     entry_points={
         "console_scripts": [
-            "osr=cli:main",
-            "ollama-router=cli:main",
+            "osr=src.cli:main",
+            "ollama-router=src.cli:main",
         ],
     },
 )

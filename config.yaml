@@ -24,17 +24,17 @@ models:
 gpu_thresholds:
   # 空闲显存低于此值转CPU
   min_free_vram_gb: 4.0
-  # 安全余量
+  # 安全余量 (GB)，路由时会加上此余量判断显存是否足够
   safety_margin_gb: 1.0
   
 # 云端API配置 (可选)
 cloud:
-  # API密钥 - 建议通过环境变量设置: export DEEPSEEK_API_KEY="your-key"
+  # API密钥 - 建议通过环境变量设置: export DEEPSEEK_API_KEY='your-key'
   # 环境变量会覆盖此处的配置
   api_key: null
   base_url: "https://api.deepseek.com"
   model: "deepseek-chat"
-  # 备用配置
+  # 备用配置 (暂未使用)
   alternatives:
     - name: "硅基流动"
       base_url: "https://api.siliconflow.cn/v1"
